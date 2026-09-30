@@ -323,13 +323,23 @@ class Feed_Generator {
 			);
 		}
 
-		$options       = get_option( 'woo_meta_catalog_settings', array() );
-		$product_ids   = $chunks[ $step ];
-		$items_written = 0;
+		$options        = get_option( 'woo_meta_catalog_settings', array() );
+		$exclude_hidden = isset( $options['exclude_hidden'] ) ? ! empty( $options['exclude_hidden'] ) : true;
+		$product_ids    = $chunks[ $step ];
+		$items_written  = 0;
 
 		foreach ( $product_ids as $pid ) {
 			$product = wc_get_product( $pid );
 			if ( ! $product || ! is_a( $product, '\WC_Product' ) ) {
+				continue;
+			}
+
+			// Fast skip if product is hidden in WooCommerce catalog.
+			if ( $exclude_hidden && 'hidden' === $product->get_catalog_visibility() ) {
+				wp_cache_delete( $pid, 'posts' );
+				wp_cache_delete( $pid, 'post_meta' );
+				clean_post_cache( $pid );
+				unset( $product );
 				continue;
 			}
 
@@ -366,6 +376,8 @@ class Feed_Generator {
 		}
 
 		fclose( $handle );
+
+		Feed_Item::reset_sales_cache();
 
 		if ( function_exists( 'gc_collect_cycles' ) ) {
 			gc_collect_cycles();

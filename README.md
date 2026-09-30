@@ -18,6 +18,14 @@ Déployé en priorité sur des catalogues volumineux (ex: **KidShow.fr** : 2 749
   $id = (string) ( $product->get_sku() ? $product->get_sku() : $product->get_id() );
   ```
   Pour les déclinaisons : l'ID de variation est assigné à `<g:id>`, et l'ID du produit parent est assigné à `<g:item_group_id>`. Cela garantit un taux de réconciliation parfait entre les événements pixel/CAPI (`ViewContent`, `AddToCart`, `Purchase`) et les articles du catalogue Meta.
+- **Filtrage Intelligent du « Stock Mort » (Algorithme Ventes Anti-Saturation)** :
+  - Détection automatique via la table WooCommerce Analytics `wc_order_product_lookup` (ou date de création si 0 vente).
+  - Élimine chirurgicalement les références épuisées depuis plus de 60 jours, 90 jours, 180 jours, 1 an ou 2 ans sans vente.
+  - Insensible aux fausses modifications (`post_modified`) causées par les synchronisations nocturnes ERP/caisse.
+  - Préserve l'apprentissage algorithmique de Meta Advantage+ Catalog Ads pour les ruptures récentes temporaires.
+  - Traitement granulaire des déclinaisons : exclut uniquement les tailles/déclinaisons mortes sans altérer les variantes en stock.
+- **Exclusion des Produits Masqués (`catalog_visibility = hidden`)** :
+  - Écarte automatiquement les produits configurés sur « Caché » dans WooCommerce qui ne doivent plus apparaître sur la boutique.
 - **Moteur Résilient Anti-Timeout & Anti-Memory Exhaustion** :
   - Découpage du catalogue en tranches de 200 à 250 produits.
   - Ordonnancement asynchrone via **WooCommerce Action Scheduler** (aucun blocage PHP ou Cloudflare 504 Gateway Timeout).

@@ -248,18 +248,20 @@ class Feed_Admin {
 		}
 
 		$settings = array(
-			'exclude_out_of_stock' => isset( $_POST['exclude_out_of_stock'] ) ? 1 : 0,
-			'exclude_no_image'     => isset( $_POST['exclude_no_image'] ) ? 1 : 0,
-			'default_brand'        => sanitize_text_field( wp_unslash( $_POST['default_brand'] ?? '' ) ),
-			'brand_attribute'      => sanitize_text_field( wp_unslash( $_POST['brand_attribute'] ?? '' ) ),
-			'enable_utms'          => isset( $_POST['enable_utms'] ) ? 1 : 0,
-			'utm_source'           => sanitize_text_field( wp_unslash( $_POST['utm_source'] ?? 'facebook' ) ),
-			'utm_medium'           => sanitize_text_field( wp_unslash( $_POST['utm_medium'] ?? 'catalog' ) ),
-			'utm_campaign'         => sanitize_text_field( wp_unslash( $_POST['utm_campaign'] ?? 'meta_feed' ) ),
-			'enable_security_key'  => isset( $_POST['enable_security_key'] ) ? 1 : 0,
-			'security_key'         => sanitize_text_field( wp_unslash( $_POST['security_key'] ?? '' ) ),
-			'batch_size'           => max( 50, min( 1000, intval( $_POST['batch_size'] ?? 200 ) ) ),
-			'daily_time'           => sanitize_text_field( wp_unslash( $_POST['daily_time'] ?? '03:30' ) ),
+			'exclude_hidden'          => isset( $_POST['exclude_hidden'] ) ? 1 : 0,
+			'exclude_dead_stock_days' => max( 0, intval( $_POST['exclude_dead_stock_days'] ?? 0 ) ),
+			'exclude_out_of_stock'    => isset( $_POST['exclude_out_of_stock'] ) ? 1 : 0,
+			'exclude_no_image'        => isset( $_POST['exclude_no_image'] ) ? 1 : 0,
+			'default_brand'           => sanitize_text_field( wp_unslash( $_POST['default_brand'] ?? '' ) ),
+			'brand_attribute'         => sanitize_text_field( wp_unslash( $_POST['brand_attribute'] ?? '' ) ),
+			'enable_utms'             => isset( $_POST['enable_utms'] ) ? 1 : 0,
+			'utm_source'              => sanitize_text_field( wp_unslash( $_POST['utm_source'] ?? 'facebook' ) ),
+			'utm_medium'              => sanitize_text_field( wp_unslash( $_POST['utm_medium'] ?? 'catalog' ) ),
+			'utm_campaign'            => sanitize_text_field( wp_unslash( $_POST['utm_campaign'] ?? 'meta_feed' ) ),
+			'enable_security_key'     => isset( $_POST['enable_security_key'] ) ? 1 : 0,
+			'security_key'            => sanitize_text_field( wp_unslash( $_POST['security_key'] ?? '' ) ),
+			'batch_size'              => max( 50, min( 1000, intval( $_POST['batch_size'] ?? 200 ) ) ),
+			'daily_time'              => sanitize_text_field( wp_unslash( $_POST['daily_time'] ?? '03:30' ) ),
 		);
 
 		update_option( 'woo_meta_catalog_settings', $settings );
@@ -477,16 +479,50 @@ class Feed_Admin {
 
 					<table class="form-table" role="presentation">
 						<tbody>
+							<!-- EXCLUDE HIDDEN PRODUCTS -->
+							<tr>
+								<th scope="row"><?php esc_html_e( 'Visibilité catalogue', 'woo-meta-catalog' ); ?></th>
+								<td>
+									<label for="exclude_hidden">
+										<input name="exclude_hidden" type="checkbox" id="exclude_hidden" value="1" <?php checked( ! isset( $options['exclude_hidden'] ) || ! empty( $options['exclude_hidden'] ) ); ?> />
+										<?php esc_html_e( 'Exclure les produits masqués (Visibilité catalogue : Caché)', 'woo-meta-catalog' ); ?>
+									</label>
+									<p class="description">
+										<?php esc_html_e( 'Recommandé (Activé) : Écarte automatiquement les anciens produits déréférencés du site sans avoir besoin de les supprimer de WooCommerce.', 'woo-meta-catalog' ); ?>
+									</p>
+								</td>
+							</tr>
+
+							<!-- DEAD STOCK FILTER (OUT OF STOCK FOR A LONG TIME) -->
+							<tr>
+								<th scope="row">
+									<label for="exclude_dead_stock_days"><?php esc_html_e( 'Stock mort (Épuisé depuis longtemps)', 'woo-meta-catalog' ); ?></label>
+								</th>
+								<td>
+									<select name="exclude_dead_stock_days" id="exclude_dead_stock_days">
+										<option value="0" <?php selected( (int) ( $options['exclude_dead_stock_days'] ?? 0 ), 0 ); ?>><?php esc_html_e( 'Désactivé (conserver tous les produits épuisés avec balise out of stock)', 'woo-meta-catalog' ); ?></option>
+										<option value="60" <?php selected( (int) ( $options['exclude_dead_stock_days'] ?? 0 ), 60 ); ?>><?php esc_html_e( 'Épuisé sans vente depuis plus de 60 jours (~2 mois)', 'woo-meta-catalog' ); ?></option>
+										<option value="90" <?php selected( (int) ( $options['exclude_dead_stock_days'] ?? 0 ), 90 ); ?>><?php esc_html_e( 'Épuisé sans vente depuis plus de 90 jours (~3 mois)', 'woo-meta-catalog' ); ?></option>
+										<option value="180" <?php selected( (int) ( $options['exclude_dead_stock_days'] ?? 0 ), 180 ); ?>><?php esc_html_e( '★ Recommandé Meta Ads : Épuisé sans vente depuis plus de 180 jours (~6 mois)', 'woo-meta-catalog' ); ?></option>
+										<option value="365" <?php selected( (int) ( $options['exclude_dead_stock_days'] ?? 0 ), 365 ); ?>><?php esc_html_e( 'Épuisé sans vente depuis plus de 365 jours (1 an)', 'woo-meta-catalog' ); ?></option>
+										<option value="730" <?php selected( (int) ( $options['exclude_dead_stock_days'] ?? 0 ), 730 ); ?>><?php esc_html_e( 'Épuisé sans vente depuis plus de 730 jours (2 ans)', 'woo-meta-catalog' ); ?></option>
+									</select>
+									<p class="description">
+										<?php esc_html_e( 'Détection intelligente : Vérifie la date de dernière vente dans les commandes WooCommerce (ou la date de création si 0 vente). Permet de purger les milliers de références mortes tout en préservant l\'apprentissage Meta Ads sur les ruptures récentes.', 'woo-meta-catalog' ); ?>
+									</p>
+								</td>
+							</tr>
+
 							<!-- EXCLUDE OUT OF STOCK -->
 							<tr>
-								<th scope="row"><?php esc_html_e( 'Rupture de stock', 'woo-meta-catalog' ); ?></th>
+								<th scope="row"><?php esc_html_e( 'Rupture de stock totale', 'woo-meta-catalog' ); ?></th>
 								<td>
 									<label for="exclude_out_of_stock">
 										<input name="exclude_out_of_stock" type="checkbox" id="exclude_out_of_stock" value="1" <?php checked( ! empty( $options['exclude_out_of_stock'] ) ); ?> />
-										<?php esc_html_e( 'Exclure strictement les produits en rupture de stock', 'woo-meta-catalog' ); ?>
+										<?php esc_html_e( 'Exclure strictement TOUS les produits en rupture de stock', 'woo-meta-catalog' ); ?>
 									</label>
 									<p class="description">
-										<?php esc_html_e( 'Recommandation Meta Ads : Laisser désactivé. Meta gère nativement la balise out of stock pour mettre en veille les publicités sans détruire l\'historique d\'apprentissage.', 'woo-meta-catalog' ); ?>
+										<?php esc_html_e( 'Recommandation Meta Ads : Laisser désactivé si vous utilisez le filtre « Stock mort » ci-dessus. Meta gère nativement la balise out of stock pour suspendre les annonces sans détruire l\'historique d\'apprentissage.', 'woo-meta-catalog' ); ?>
 									</p>
 								</td>
 							</tr>
