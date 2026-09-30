@@ -1,0 +1,341 @@
+/**
+ * Admin Styles for Woo Meta Catalog Feed Soyoo
+ * Author: SOYOO
+ */
+
+.woo-meta-catalog-wrap {
+	max-width: 1100px;
+	margin-top: 20px;
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+}
+
+/* Header */
+.woo-meta-catalog-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	background: #ffffff;
+	padding: 20px 24px;
+	border-radius: 8px;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+	margin-bottom: 24px;
+	border-left: 4px solid #008060;
+}
+
+.woo-meta-catalog-header h1 {
+	margin: 0;
+	font-size: 22px;
+	font-weight: 700;
+	color: #1d2327;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.woo-meta-catalog-header .subtitle {
+	margin: 4px 0 0 0;
+	color: #646970;
+	font-size: 13px;
+}
+
+.badge-version {
+	font-size: 11px;
+	font-weight: 600;
+	background: #f0f0f1;
+	color: #50575e;
+	padding: 2px 8px;
+	border-radius: 12px;
+}
+
+.badge-hpos {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	background: #e6f4ea;
+	color: #137333;
+	font-weight: 600;
+	font-size: 12px;
+	padding: 4px 10px;
+	border-radius: 4px;
+	margin-right: 8px;
+}
+
+.badge-soyoo {
+	display: inline-flex;
+	align-items: center;
+	background: #1d2327;
+	color: #ffffff;
+	font-weight: 600;
+	font-size: 12px;
+	padding: 4px 10px;
+	border-radius: 4px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+
+/* Callout Green Box: Feed URL */
+.woo-meta-feed-url-card {
+	background: #f0fdf4;
+	border: 2px solid #86efac;
+	border-radius: 8px;
+	padding: 24px;
+	margin-bottom: 24px;
+	display: flex;
+	gap: 20px;
+	box-shadow: 0 2px 6px rgba(16, 185, 129, 0.08);
+}
+
+.woo-meta-feed-url-card .card-icon {
+	flex-shrink: 0;
+}
+
+.woo-meta-feed-url-card .card-icon .dashicons {
+	font-size: 32px;
+	width: 32px;
+	height: 32px;
+	color: #059669;
+}
+
+.woo-meta-feed-url-card .card-content {
+	flex-grow: 1;
+}
+
+.woo-meta-feed-url-card h3 {
+	margin: 0 0 6px 0;
+	font-size: 17px;
+	color: #065f46;
+	font-weight: 700;
+}
+
+.woo-meta-feed-url-card p {
+	margin: 0 0 16px 0;
+	color: #047857;
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.url-input-group {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+.url-input-group input {
+	background: #ffffff;
+	border: 1px solid #10b981;
+	font-family: Consolas, Monaco, monospace;
+	font-size: 13px;
+	padding: 8px 12px;
+	color: #064e3b;
+	font-weight: 600;
+	box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.url-input-group button.btn-copy-feed {
+	background: #059669;
+	border-color: #047857;
+	color: #ffffff;
+	font-weight: 600;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	white-space: nowrap;
+	transition: all 0.2s ease;
+}
+
+.url-input-group button.btn-copy-feed:hover {
+	background: #047857;
+	border-color: #065f46;
+}
+
+.url-input-group a.button-secondary {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	white-space: nowrap;
+}
+
+.security-badge {
+	margin-top: 14px;
+	font-size: 12px;
+	color: #065f46;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-weight: 500;
+}
+
+.security-badge .dashicons {
+	font-size: 16px;
+	width: 16px;
+	height: 16px;
+}
+
+/* Status Cards & Bar */
+.woo-meta-status-container {
+	background: #ffffff;
+	border-radius: 8px;
+	padding: 24px;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+	margin-bottom: 24px;
+}
+
+.status-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+	gap: 16px;
+	margin-bottom: 20px;
+}
+
+.status-box {
+	background: #f8fafc;
+	border: 1px solid #e2e8f0;
+	border-radius: 6px;
+	padding: 12px 16px;
+}
+
+.status-box .label {
+	display: block;
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	color: #64748b;
+	margin-bottom: 6px;
+	font-weight: 600;
+}
+
+.status-box .value {
+	display: block;
+	font-size: 14px;
+	font-weight: 700;
+	color: #0f172a;
+}
+
+.badge-status-ok {
+	color: #15803d;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.badge-status-warn {
+	color: #b45309;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+/* Regeneration Action Bar */
+.regeneration-action-bar {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding-top: 16px;
+	border-top: 1px solid #f1f5f9;
+}
+
+.btn-trigger-generation {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-weight: 600;
+}
+
+.btn-trigger-generation.loading .dashicons {
+	animation: spin 1s infinite linear;
+}
+
+@keyframes spin {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}
+
+.btn-reset-lock {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.progress-wrap {
+	flex-grow: 1;
+	margin-left: 12px;
+}
+
+.progress-bar-outer {
+	background: #e2e8f0;
+	border-radius: 999px;
+	height: 12px;
+	overflow: hidden;
+	position: relative;
+}
+
+.progress-bar-inner {
+	background: linear-gradient(90deg, #10b981 0%, #059669 100%);
+	height: 100%;
+	width: 0%;
+	border-radius: 999px;
+	transition: width 0.3s ease;
+}
+
+.progress-message {
+	display: block;
+	margin-top: 6px;
+	font-size: 12px;
+	color: #475569;
+	font-weight: 500;
+}
+
+/* Settings Card */
+.woo-meta-settings-card {
+	background: #ffffff;
+	border-radius: 8px;
+	padding: 24px;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+	margin-bottom: 24px;
+}
+
+.woo-meta-settings-card h2 {
+	margin-top: 0;
+	font-size: 18px;
+	font-weight: 700;
+	color: #1e293b;
+	padding-bottom: 8px;
+	border-bottom: 1px solid #f1f5f9;
+}
+
+.utm-fields-grid {
+	display: flex;
+	gap: 16px;
+	flex-wrap: wrap;
+}
+
+.security-key-wrap {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+
+/* Documentation Card */
+.woo-meta-doc-card {
+	background: #f8fafc;
+	border: 1px solid #cbd5e1;
+	border-radius: 8px;
+	padding: 20px 24px;
+}
+
+.woo-meta-doc-card h3 {
+	margin-top: 0;
+	font-size: 15px;
+	color: #1e293b;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.woo-meta-doc-card ol {
+	margin: 0;
+	padding-left: 20px;
+	color: #475569;
+	font-size: 13px;
+	line-height: 1.6;
+}

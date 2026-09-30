@@ -1,8 +1,19 @@
-# WordPress Plugin .gitignore
-/node_modules/
+# Archives & Builds
+*.zip
+*.tar.gz
+
+# Temporary & Log files
+*.tmp
+*.log
+feeds/
+
+# OS metadata
 .DS_Store
 Thumbs.db
-*.log
-*.zip
+desktop.ini
+
+# IDE & Editor folders
 .vscode/
 .idea/
+*.sublime-project
+*.sublime-workspace

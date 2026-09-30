@@ -1,3 +1,133 @@
-# woo-meta-catalog-feed-soyoo
+# Woo Meta Catalog Feed Soyoo
 
-Extension WooCommerce in-house SOYOO pour la génération et synchronisation de flux catalogue produits Meta (Facebook & Instagram Shop / Dynamic Product Ads).
+[![WooCommerce HPOS](https://img.shields.io/badge/WooCommerce-HPOS%20Compatible-brightgreen.svg)](#)
+[![PHP](https://img.shields.io/badge/PHP-7.4%20to%208.3%2B-blue.svg)](#)
+[![WordPress](https://img.shields.io/badge/WordPress-6.0%2B-blue.svg)](#)
+[![Meta CAPI Aligned](https://img.shields.io/badge/Meta%20Ads-CAPI%20Aligned-success.svg)](#)
+
+Générateur de flux catalogue XML haute performance, ultra-léger et autonome pour **Meta Ads** (Commerce Manager, Advantage+ Catalog Ads, retargeting DPA) et **Google Shopping**, développé sur-mesure par l'agence **SOYOO**.
+
+Déployé en priorité sur des catalogues volumineux (ex: **KidShow.fr** : 2 749 produits publiés, 210 produits variables, 0 SKU - uniquement des Post IDs sur Rocket.net Cloudflare Enterprise) avec vocation à être mutualisé sur tous les sites e-commerce sous gestion SOYOO.
+
+---
+
+## 🚀 1. Caractéristiques Principales
+
+- **Alignement CAPI Critique (100% Match Rate)** : L'identifiant XML (`<g:id>`) suit **STRICTEMENT** la même formule que notre extension in-house `woo-fb-tracking-server-side` :
+  ```php
+  $id = (string) ( $product->get_sku() ? $product->get_sku() : $product->get_id() );
+  ```
+  Pour les déclinaisons : l'ID de variation est assigné à `<g:id>`, et l'ID du produit parent est assigné à `<g:item_group_id>`. Cela garantit un taux de réconciliation parfait entre les événements pixel/CAPI (`ViewContent`, `AddToCart`, `Purchase`) et les articles du catalogue Meta.
+- **Moteur Résilient Anti-Timeout & Anti-Memory Exhaustion** :
+  - Découpage du catalogue en tranches de 200 à 250 produits.
+  - Ordonnancement asynchrone via **WooCommerce Action Scheduler** (aucun blocage PHP ou Cloudflare 504 Gateway Timeout).
+  - Écriture en streaming direct dans un fichier temporaire `meta-catalog.xml.tmp`.
+  - Renommage atomique vers `meta-catalog.xml` une fois le lot terminé.
+  - Consommation mémoire constante $O(1)$ grâce à la libération périodique des caches WP (`wp_cache_delete`, `gc_collect_cycles`).
+- **Compatibilité Stricte WooCommerce HPOS** : Déclaration officielle de compatibilité avec le stockage haute performance des commandes (`FeaturesUtil::declare_compatibility( 'custom_order_tables' )`).
+- **Distribution Intelligente & Caching HTTP** :
+  - Support natif des en-têtes `ETag` et `If-Modified-Since` avec réponse `HTTP 304 Not Modified` pour économiser la bande passante et les ressources serveur lors des passages répétés du robot Meta.
+- **Sécurité Anti-Scraping** : Jeton secret optionnel (`?feed_key=xxx`) pour empêcher le téléchargement concurrentiel automatisé du catalogue tout en autorisant le crawler Meta.
+- **Mises à Jour Automatiques via GitHub** : Intégration de **Plugin Update Checker (PUC v5.6)** pointant sur le dépôt privé/public de SOYOO.
+- **Support WP-CLI** : Commandes terminal intégrées pour les administrateurs et DevOps.
+
+---
+
+## 📐 2. Structure du Flux XML
+
+Le flux produit respecte scrupuleusement la spécification **RSS 2.0 avec l'espace de noms Google Base** (`xmlns:g="http://base.google.com/ns/1.0"`) :
+
+| Balise XML | Description & Logique |
+| :--- | :--- |
+| `<g:id>` | SKU si défini, sinon Post ID WooCommerce (aligné CAPI). |
+| `<g:title>` | Titre nettoyé du produit (ou Titre Parent + Attributs pour les variations). |
+| `<g:description>` | Extrait court (ou description longue tronquée à 5 000 car.), balises HTML nettoyées. |
+| `<g:link>` | URL canonique HTTPS avec balisage UTM paramétrable (`utm_source=facebook&utm_medium=catalog`). |
+| `<g:image_link>` | URL absolue HTTPS de l'image principale (avec repli sur l'image parent si variation sans visuel). |
+| `<g:additional_image_link>` | Jusqu'à 5 images additionnelles issues de la galerie produit. |
+| `<g:availability>` | `in stock` ou `out of stock` selon l'état réel des stocks WooCommerce. |
+| `<g:price>` | Prix régulier formaté avec le code devise ISO (ex: `19.90 EUR`). |
+| `<g:sale_price>` | Prix remisé si une promotion est active sur le produit. |
+| `<g:condition>` | `new`. |
+| `<g:brand>` | Marque issue de l'attribut produit configuré (`pa_marque`, `pa_brand`), ou nom du site en repli. |
+| `<g:item_group_id>` | Présent uniquement sur les variations, contenant l'identifiant du produit parent. |
+| `<g:product_type>` | Fil d'Ariane hiérarchique des catégories (ex: `Vêtements > Fille > Robes`). |
+| `<g:inventory>` | Quantité numérique en stock si la gestion des stocks est active. |
+
+---
+
+## 🛠️ 3. Configuration dans Meta Commerce Manager
+
+### Étape 1 : Récupérer l'URL du flux
+1. Rendez-vous dans votre administration WordPress sous **WooCommerce > Flux Meta Catalog**.
+2. Copiez l'URL mise en valeur dans l'encadré vert :
+   - Format standard : `https://votredomaine.fr/feed/meta-catalog.xml`
+   - Format sécurisé : `https://votredomaine.fr/feed/meta-catalog.xml?feed_key=VOTRE_JETON`
+
+### Étape 2 : Ajouter la source de données dans Meta
+1. Accédez à [Meta Commerce Manager](https://business.facebook.com/commerce).
+2. Sélectionnez votre catalogue de produits.
+3. Dans le menu latéral, cliquez sur **Catalogue > Sources de données**.
+4. Cliquez sur **Ajouter des articles** > **Flux de données (Data feed)**.
+5. Choisissez l'option **Flux programmé (Scheduled feed)**.
+6. Collez l'URL de votre flux SOYOO.
+7. Réglez la fréquence de mise à jour sur **Quotidienne** à **04h30 ou 05h00 du matin** (1 heure après la génération nocturne WordPress de 03h30).
+8. Définissez la devise par défaut (ex: `EUR - Euro`).
+9. Lancez l'importation initiale : Meta traitera immédiatement tous vos articles simples et déclinaisons.
+
+---
+
+## 💻 4. Commandes WP-CLI
+
+Pour lancer la génération en ligne de commande ou l'intégrer à un cron système :
+
+```bash
+# Déclencher la génération en arrière-plan via Action Scheduler
+wp meta-catalog generate
+
+# Forcer la génération synchrone immédiate (idéal en maintenance SSH)
+wp meta-catalog generate --sync
+
+# Consulter le statut, la date, la taille et le nombre d'articles
+wp meta-catalog status
+
+# Réinitialiser un verrou orphelin suite à un arrêt inopiné du serveur
+wp meta-catalog reset-lock
+```
+
+---
+
+## 🔌 5. Hooks pour Développeurs
+
+### Action : `woo_meta_catalog_feed_generated`
+Déclenchée immédiatement après la finalisation et le renommage atomique du fichier XML :
+
+```php
+add_action( 'woo_meta_catalog_feed_generated', function( $file_path, $total_items, $duration ) {
+    // Purger les caches externes (ex: WP Agent Bridge, Cloudflare, WP Rocket)
+    if ( function_exists( 'rocket_clean_domain' ) ) {
+        rocket_clean_domain();
+    }
+}, 10, 3 );
+```
+
+---
+
+## 📦 6. Packaging & Déploiement
+
+Pour générer l'archive ZIP installable prête pour le client :
+
+Exécutez dans un terminal PowerShell :
+```powershell
+.\bin\build-zip.ps1
+```
+Le script effectuera une analyse syntaxique stricte (`php -l`) sur chaque fichier source avant de générer `woo-meta-catalog-feed-soyoo.zip` à la racine.
+
+---
+
+## 🔒 7. Sanctuarisation In-House SOYOO
+
+Ce plugin fait partie du catalogue officiel des extensions in-house SOYOO. Toute modification doit être effectuée et versionnée exclusivement au sein de son dépôt de référence :
+`c:\Antigravity\woo-plugins\woo-meta-catalog-feed-soyoo\`
+et synchronisée sur GitHub :
+`https://github.com/SOYOO974/woo-meta-catalog-feed-soyoo`
