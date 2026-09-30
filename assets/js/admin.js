@@ -75,7 +75,7 @@
 			$('#security_key').val(token);
 		});
 
-		// 3. Trigger Manual Generation via AJAX
+		// 3. Trigger Manual Generation via Browser-Driven Batch AJAX Runner
 		$('#btn-trigger-generation').on('click', function(e) {
 			e.preventDefault();
 			var $btn = $(this);
@@ -86,28 +86,123 @@
 
 			$btn.addClass('loading').prop('disabled', true);
 			$('#generation-progress-wrap').fadeIn(200);
-			$('#generation-progress-bar').css('width', '5%');
-			$('#generation-progress-msg').text('Démarrage du traitement par lots Action Scheduler...');
+			$('#generation-progress-bar').css('width', '3%');
+			$('#generation-progress-msg').text('Initialisation du flux catalogue...');
 
+			// Step 1: Initialize generation run
 			$.ajax({
 				url: wooMetaCatalogVars.ajaxUrl,
 				type: 'POST',
 				dataType: 'json',
 				data: {
-					action: 'woo_meta_catalog_trigger_generation',
+					action: 'woo_meta_catalog_init_generation',
 					security: wooMetaCatalogVars.nonce
 				},
-				success: function(response) {
-					if (response.success) {
-						startStatusPolling();
-					} else {
+				success: function(initRes) {
+					if (!initRes.success || !initRes.data || !initRes.data.run_id) {
 						stopLoading($btn);
-						alert(response.data && response.data.message ? response.data.message : 'Erreur lors du déclenchement.');
+						alert(initRes.data && initRes.data.message ? initRes.data.message : 'Erreur lors de l\'initialisation.');
+						return;
 					}
+
+					var runId       = initRes.data.run_id;
+					var totalChunks = parseInt(initRes.data.total_chunks, 10) || 1;
+					var totalProds  = parseInt(initRes.data.total_products, 10) || 0;
+
+					$('#generation-progress-msg').text('Compilation de ' + totalProds + ' produits en ' + totalChunks + ' lots...');
+
+					// Step 2: Recursive chunk processor
+					function processChunk(step) {
+						var percent = Math.min(95, Math.max(5, Math.round((step / totalChunks) * 100)));
+						$('#generation-progress-bar').css('width', percent + '%');
+						$('#generation-progress-msg').text('Compilation du lot ' + (step + 1) + ' / ' + totalChunks + ' (' + percent + '%)...');
+
+						$.ajax({
+							url: wooMetaCatalogVars.ajaxUrl,
+							type: 'POST',
+							dataType: 'json',
+							data: {
+								action: 'woo_meta_catalog_process_chunk',
+								security: wooMetaCatalogVars.nonce,
+								run_id: runId,
+								step: step
+							},
+							success: function(chunkRes) {
+								if (!chunkRes.success) {
+									stopLoading($btn);
+									alert(chunkRes.data && chunkRes.data.message ? chunkRes.data.message : 'Erreur sur le lot ' + (step + 1));
+									return;
+								}
+
+								var nextStep = step + 1;
+								if (nextStep < totalChunks) {
+									processChunk(nextStep);
+								} else {
+									finalizeFeed(runId);
+								}
+							},
+							error: function(xhr, status, error) {
+								stopLoading($btn);
+								alert('Erreur serveur lors du traitement du lot ' + (step + 1) + ' : ' + error);
+							}
+						});
+					}
+
+					// Step 3: Finalize XML feed
+					function finalizeFeed(runId) {
+						$('#generation-progress-bar').css('width', '98%');
+						$('#generation-progress-msg').text('Finalisation et validation du fichier XML...');
+
+						$.ajax({
+							url: wooMetaCatalogVars.ajaxUrl,
+							type: 'POST',
+							dataType: 'json',
+							data: {
+								action: 'woo_meta_catalog_finalize_feed',
+								security: wooMetaCatalogVars.nonce,
+								run_id: runId
+							},
+							success: function(finRes) {
+								stopLoading($btn);
+								if (finRes.success && finRes.data) {
+									var d = finRes.data;
+									$('#generation-progress-bar').css('width', '100%');
+									$('#generation-progress-msg').html('<span style="color:#059669; font-weight:600;">' + (d.message || 'Flux généré avec succès !') + '</span>');
+
+									// Update metrics in status boxes
+									if (d.total_items) {
+										$('#status-items-val').text(d.total_items + ' items');
+									}
+									if (d.file_size_human) {
+										$('#status-size-val').text(d.file_size_human);
+									}
+									if (d.duration) {
+										$('#status-duration-val').text(d.duration + ' s');
+									}
+									$('#status-state-val').html('<span class="badge-status-ok"><span class="dashicons dashicons-yes"></span> Flux généré et valide</span>');
+									$('#status-date-val').text('À l\'instant');
+									$('.woo-meta-empty-feed-notice').slideUp(300);
+
+									setTimeout(function() {
+										$('#generation-progress-wrap').fadeOut(500);
+									}, 4000);
+								} else {
+									alert(finRes.data && finRes.data.message ? finRes.data.message : 'Erreur lors de la finalisation.');
+								}
+							},
+							error: function(xhr, status, error) {
+								stopLoading($btn);
+								alert('Erreur serveur lors de la finalisation : ' + error);
+							}
+						});
+					}
+
+					// Start chunk 0
+					processChunk(0);
 				},
 				error: function(xhr, status, error) {
 					stopLoading($btn);
-					alert('Erreur serveur lors de la requête de régénération: ' + error);
+					alert('Erreur serveur lors de l\'initialisation : ' + error);
 				}
 			});
 		});
@@ -142,64 +237,6 @@
 				}
 			});
 		});
-
-		// 5. Polling Loop
-		function startStatusPolling() {
-			clearInterval(pollInterval);
-			pollInterval = setInterval(function() {
-				$.ajax({
-					url: wooMetaCatalogVars.ajaxUrl,
-					type: 'POST',
-					dataType: 'json',
-					data: {
-						action: 'woo_meta_catalog_check_status',
-						security: wooMetaCatalogVars.nonce
-					},
-					success: function(response) {
-						if (response.success && response.data) {
-							updateProgressUI(response.data);
-						}
-					}
-				});
-			}, 2000);
-		}
-
-		function updateProgressUI(data) {
-			var status   = data.status || 'idle';
-			var progress = parseInt(data.progress, 10) || 0;
-			var message  = data.message || '';
-
-			$('#generation-progress-bar').css('width', progress + '%');
-			$('#generation-progress-msg').text(message);
-
-			if (status === 'completed') {
-				clearInterval(pollInterval);
-				$('#generation-progress-bar').css('width', '100%');
-				stopLoading($('#btn-trigger-generation'));
-
-				// Update metrics in status boxes
-				if (data.total_items) {
-					$('#status-items-val').text(data.total_items + ' items');
-				}
-				if (data.file_size_human) {
-					$('#status-size-val').text(data.file_size_human);
-				}
-				if (data.duration) {
-					$('#status-duration-val').text(data.duration + ' s');
-				}
-				$('#status-state-val').html('<span class="badge-status-ok"><span class="dashicons dashicons-yes"></span> Flux généré et valide</span>');
-				$('#status-date-val').text('À l\'instant');
-
-				setTimeout(function() {
-					$('#generation-progress-wrap').fadeOut(500);
-				}, 4000);
-
-			} else if (status === 'failed') {
-				clearInterval(pollInterval);
-				stopLoading($('#btn-trigger-generation'));
-				$('#generation-progress-msg').html('<span style="color:#dc2626;">' + (data.error_message || 'Échec de la génération') + '</span>');
-			}
-		}
 
 		function stopLoading($btn) {
 			$btn.removeClass('loading').prop('disabled', false);

@@ -46,7 +46,7 @@ class Feed_Generator {
 	 * Constructor.
 	 */
 	public function __construct() {
-		add_action( self::DAILY_HOOK, array( $this, 'start_generation' ) );
+		add_action( self::DAILY_HOOK, array( $this, 'run_daily_generation' ) );
 		add_action( self::CHUNK_HOOK, array( $this, 'process_chunk' ), 10, 2 );
 		add_action( self::FINALIZE_HOOK, array( $this, 'finalize_feed' ), 10, 1 );
 	}
@@ -135,12 +135,25 @@ class Feed_Generator {
 	}
 
 	/**
-	 * Start the XML feed generation process.
+	 * Daily generation job run by Action Scheduler.
+	 * Executes all chunks sequentially within a single background process to avoid loopback blocks.
+	 */
+	public function run_daily_generation() {
+		$init = $this->init_generation( false );
+		if ( empty( $init['success'] ) ) {
+			return;
+		}
+
+		$this->process_all_synchronously( $init['run_id'] );
+	}
+
+	/**
+	 * Initialize the XML feed generation process (create temp file, write XML headers, chunk IDs).
 	 *
 	 * @param bool $manual True if triggered manually.
-	 * @return array Status array with success, message, run_id.
+	 * @return array Status array with success, message, run_id, total_chunks, total_products.
 	 */
-	public function start_generation( $manual = false ) {
+	public function init_generation( $manual = false ) {
 		// 1. Anti-collision lock check (20 minutes).
 		$current_lock = get_transient( self::LOCK_TRANSIENT );
 		if ( $current_lock && ! $manual ) {
@@ -229,7 +242,31 @@ class Feed_Generator {
 		);
 		update_option( self::FEED_STATUS_OPTION, $feed_status, false );
 
-		// 5. Enqueue first chunk via Action Scheduler.
+		return array(
+			'success'        => true,
+			'run_id'         => $run_id,
+			'total_products' => count( $product_ids ),
+			'total_chunks'   => count( $chunks ),
+			'batch_size'     => $batch_size,
+			'message'        => __( 'Feed generation initialized successfully.', 'woo-meta-catalog' ),
+		);
+	}
+
+	/**
+	 * Start the XML feed generation process via Action Scheduler.
+	 *
+	 * @param bool $manual True if triggered manually.
+	 * @return array Status array with success, message, run_id.
+	 */
+	public function start_generation( $manual = false ) {
+		$init = $this->init_generation( $manual );
+		if ( empty( $init['success'] ) ) {
+			return $init;
+		}
+
+		$run_id = $init['run_id'];
+
+		// Enqueue first chunk via Action Scheduler if available.
 		if ( function_exists( 'as_enqueue_async_action' ) ) {
 			as_enqueue_async_action(
 				self::CHUNK_HOOK,
@@ -244,8 +281,8 @@ class Feed_Generator {
 		return array(
 			'success'        => true,
 			'run_id'         => $run_id,
-			'total_products' => count( $product_ids ),
-			'total_chunks'   => count( $chunks ),
+			'total_products' => $init['total_products'],
+			'total_chunks'   => $init['total_chunks'],
 			'message'        => __( 'Feed generation started in background.', 'woo-meta-catalog' ),
 		);
 	}
@@ -255,25 +292,35 @@ class Feed_Generator {
 	 *
 	 * @param string $run_id Run ID.
 	 * @param int    $step   Chunk index.
+	 * @return array
 	 */
 	public function process_chunk( $run_id, $step ) {
 		$job_state = get_option( self::JOB_STATE_OPTION, array() );
 
 		// Validation check.
 		if ( empty( $job_state ) || empty( $job_state['run_id'] ) || $job_state['run_id'] !== $run_id ) {
-			return;
+			return array(
+				'success' => false,
+				'message' => __( 'Identifiant de lot invalide ou expiré.', 'woo-meta-catalog' ),
+			);
 		}
 
 		$chunks = ! empty( $job_state['chunks'] ) ? $job_state['chunks'] : array();
 		if ( ! isset( $chunks[ $step ] ) ) {
-			return;
+			return array(
+				'success' => false,
+				'message' => sprintf( __( 'Étape introuvable : %d', 'woo-meta-catalog' ), $step ),
+			);
 		}
 
 		$temp_file = self::get_temp_file_path();
 		$handle    = @fopen( $temp_file, 'ab' );
 		if ( ! $handle ) {
 			$this->fail_job( $run_id, sprintf( __( 'Cannot append to temp file at step %d', 'woo-meta-catalog' ), $step ) );
-			return;
+			return array(
+				'success' => false,
+				'message' => __( 'Échec d\'ouverture du fichier temporaire.', 'woo-meta-catalog' ),
+			);
 		}
 
 		$options       = get_option( 'woo_meta_catalog_settings', array() );
@@ -345,39 +392,57 @@ class Feed_Generator {
 		);
 		update_option( self::FEED_STATUS_OPTION, $feed_status, false );
 
-		// Determine next action.
-		if ( $next_step < $total_chunks ) {
-			if ( function_exists( 'as_enqueue_async_action' ) ) {
-				as_enqueue_async_action(
-					self::CHUNK_HOOK,
-					array( 'run_id' => $run_id, 'step' => $next_step ),
-					'woo-meta-catalog'
-				);
-			}
-		} else {
-			// All chunks done! Enqueue finalization.
-			if ( function_exists( 'as_enqueue_async_action' ) ) {
-				as_enqueue_async_action(
-					self::FINALIZE_HOOK,
-					array( 'run_id' => $run_id ),
-					'woo-meta-catalog'
-				);
+		// Determine next action for background non-AJAX execution.
+		if ( ! wp_doing_ajax() ) {
+			if ( $next_step < $total_chunks ) {
+				if ( function_exists( 'as_enqueue_async_action' ) ) {
+					as_enqueue_async_action(
+						self::CHUNK_HOOK,
+						array( 'run_id' => $run_id, 'step' => $next_step ),
+						'woo-meta-catalog'
+					);
+				}
 			} else {
-				$this->finalize_feed( $run_id );
+				// All chunks done! Enqueue finalization.
+				if ( function_exists( 'as_enqueue_async_action' ) ) {
+					as_enqueue_async_action(
+						self::FINALIZE_HOOK,
+						array( 'run_id' => $run_id ),
+						'woo-meta-catalog'
+					);
+				} else {
+					$this->finalize_feed( $run_id );
+				}
 			}
 		}
+
+		return array(
+			'success'        => true,
+			'run_id'         => $run_id,
+			'step'           => $step,
+			'next_step'      => $next_step,
+			'total_chunks'   => $total_chunks,
+			'items_written'  => $items_written,
+			'total_items'    => (int) $job_state['items_written'],
+			'progress'       => $progress,
+			'message'        => sprintf( __( 'Batch %1$d / %2$d processed (%3$d%%)', 'woo-meta-catalog' ), $next_step, $total_chunks, $progress ),
+		);
 	}
 
 	/**
 	 * Finalize XML feed, close root tags, atomic rename, and record stats.
 	 *
 	 * @param string $run_id Run ID.
+	 * @return array
 	 */
 	public function finalize_feed( $run_id ) {
 		$job_state = get_option( self::JOB_STATE_OPTION, array() );
 
 		if ( empty( $job_state ) || empty( $job_state['run_id'] ) || $job_state['run_id'] !== $run_id ) {
-			return;
+			return array(
+				'success' => false,
+				'message' => __( 'Identifiant de lot introuvable pour la finalisation.', 'woo-meta-catalog' ),
+			);
 		}
 
 		$temp_file  = self::get_temp_file_path();
@@ -403,7 +468,10 @@ class Feed_Generator {
 
 		if ( ! $renamed || ! file_exists( $final_file ) ) {
 			$this->fail_job( $run_id, __( 'Failed to replace the final feed XML file.', 'woo-meta-catalog' ) );
-			return;
+			return array(
+				'success' => false,
+				'message' => __( 'Échec d\'écriture du fichier final XML.', 'woo-meta-catalog' ),
+			);
 		}
 
 		// Compute metrics.
@@ -412,6 +480,7 @@ class Feed_Generator {
 		$total_item = (int) $job_state['items_written'];
 
 		$feed_status = array(
+			'success'        => true,
 			'status'         => 'completed',
 			'run_id'         => $run_id,
 			'progress'       => 100,
@@ -422,6 +491,7 @@ class Feed_Generator {
 			'file_size_human'=> size_format( $file_size, 2 ),
 			'file_path'      => $final_file,
 			'file_url'       => self::get_feed_file_url(),
+			'canonical_url'  => Feed_Server::get_public_url(),
 			'message'        => sprintf(
 				__( 'Feed successfully generated with %1$d items in %2$s seconds (%3$s).', 'woo-meta-catalog' ),
 				$total_item,
@@ -438,6 +508,8 @@ class Feed_Generator {
 
 		// Trigger hook for external caches (WP Agent Bridge, Cloudflare, etc.).
 		do_action( 'woo_meta_catalog_feed_generated', $final_file, $total_item, $duration );
+
+		return $feed_status;
 	}
 
 	/**
@@ -479,20 +551,25 @@ class Feed_Generator {
 	}
 
 	/**
-	 * Synchronous fallback if Action Scheduler is unavailable.
+	 * Synchronous fallback if Action Scheduler is unavailable or for CLI / daily cron execution.
 	 *
 	 * @param string $run_id Run ID.
+	 * @return array|false
 	 */
-	protected function process_all_synchronously( $run_id ) {
+	public function process_all_synchronously( $run_id ) {
 		$job_state = get_option( self::JOB_STATE_OPTION, array() );
 		if ( empty( $job_state['chunks'] ) ) {
-			return;
+			return false;
+		}
+
+		if ( function_exists( 'set_time_limit' ) && false === strpos( ini_get( 'disable_functions' ), 'set_time_limit' ) ) {
+			@set_time_limit( 300 );
 		}
 
 		foreach ( array_keys( $job_state['chunks'] ) as $step ) {
 			$this->process_chunk( $run_id, $step );
 		}
 
-		$this->finalize_feed( $run_id );
+		return $this->finalize_feed( $run_id );
 	}
 }

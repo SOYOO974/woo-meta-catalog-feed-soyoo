@@ -24,6 +24,9 @@ class Feed_Admin {
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
 		add_action( 'admin_head', array( $this, 'suppress_admin_notices' ), 999 );
 		add_action( 'in_admin_header', array( $this, 'suppress_admin_notices' ), 999 );
+		add_action( 'wp_ajax_woo_meta_catalog_init_generation', array( $this, 'ajax_init_generation' ) );
+		add_action( 'wp_ajax_woo_meta_catalog_process_chunk', array( $this, 'ajax_process_chunk' ) );
+		add_action( 'wp_ajax_woo_meta_catalog_finalize_feed', array( $this, 'ajax_finalize_feed' ) );
 		add_action( 'wp_ajax_woo_meta_catalog_trigger_generation', array( $this, 'ajax_trigger_generation' ) );
 		add_action( 'wp_ajax_woo_meta_catalog_check_status', array( $this, 'ajax_check_status' ) );
 		add_action( 'wp_ajax_woo_meta_catalog_reset_lock', array( $this, 'ajax_reset_lock' ) );
@@ -126,7 +129,69 @@ class Feed_Admin {
 	}
 
 	/**
-	 * Handle AJAX trigger generation.
+	 * Handle AJAX init generation.
+	 */
+	public function ajax_init_generation() {
+		check_ajax_referer( 'woo_meta_catalog_admin_nonce', 'security' );
+
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Droits insuffisants.', 'woo-meta-catalog' ) ) );
+		}
+
+		$result = Feed_Generator::instance()->init_generation( true );
+
+		if ( ! empty( $result['success'] ) ) {
+			wp_send_json_success( $result );
+		} else {
+			wp_send_json_error( $result );
+		}
+	}
+
+	/**
+	 * Handle AJAX process chunk.
+	 */
+	public function ajax_process_chunk() {
+		check_ajax_referer( 'woo_meta_catalog_admin_nonce', 'security' );
+
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Droits insuffisants.', 'woo-meta-catalog' ) ) );
+		}
+
+		$run_id = isset( $_POST['run_id'] ) ? sanitize_text_field( wp_unslash( $_POST['run_id'] ) ) : '';
+		$step   = isset( $_POST['step'] ) ? intval( $_POST['step'] ) : 0;
+
+		$result = Feed_Generator::instance()->process_chunk( $run_id, $step );
+
+		if ( ! empty( $result['success'] ) ) {
+			wp_send_json_success( $result );
+		} else {
+			wp_send_json_error( $result );
+		}
+	}
+
+	/**
+	 * Handle AJAX finalize feed.
+	 */
+	public function ajax_finalize_feed() {
+		check_ajax_referer( 'woo_meta_catalog_admin_nonce', 'security' );
+
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Droits insuffisants.', 'woo-meta-catalog' ) ) );
+		}
+
+		$run_id = isset( $_POST['run_id'] ) ? sanitize_text_field( wp_unslash( $_POST['run_id'] ) ) : '';
+
+		$result = Feed_Generator::instance()->finalize_feed( $run_id );
+
+		if ( ! empty( $result['success'] ) ) {
+			wp_send_json_success( $result );
+		} else {
+			wp_send_json_error( $result );
+		}
+	}
+
+	/**
+	 * Handle AJAX trigger generation (Action Scheduler fallback).
 	 */
 	public function ajax_trigger_generation() {
 		check_ajax_referer( 'woo_meta_catalog_admin_nonce', 'security' );
@@ -263,6 +328,15 @@ class Feed_Admin {
 				<?php settings_errors( 'woo_meta_catalog_messages' ); ?>
 			</div>
 
+			<?php if ( ! $exists ) : ?>
+				<div class="notice notice-warning inline woo-meta-empty-feed-notice" style="margin: 15px 0 20px; padding: 14px 18px; border-left: 4px solid #f59e0b; background: #fffbeb; border-radius: 4px;">
+					<p style="margin: 0; font-size: 14px; color: #92400e; line-height: 1.5;">
+						<strong><span class="dashicons dashicons-info" style="vertical-align: middle; margin-right: 4px; color: #f59e0b;"></span><?php esc_html_e( 'Action requise :', 'woo-meta-catalog' ); ?></strong>
+						<?php esc_html_e( 'Le fichier XML du flux n\'a pas encore été généré. Cliquez sur le bouton « Régénérer le flux maintenant » ci-dessous pour compiler votre catalogue (~12 secondes).', 'woo-meta-catalog' ); ?>
+					</p>
+				</div>
+			<?php endif; ?>
+
 			<!-- CALLOUT GREEN BOX: FEED URL -->
 			<div class="woo-meta-feed-url-card">
 				<div class="card-icon">
@@ -283,6 +357,11 @@ class Feed_Admin {
 							<?php esc_html_e( 'Tester le flux', 'woo-meta-catalog' ); ?>
 						</a>
 					</div>
+
+					<p class="description" style="margin-top: 10px; font-size: 12px; color: #64748b;">
+						<?php esc_html_e( 'URL directe du fichier statique sur le serveur :', 'woo-meta-catalog' ); ?>
+						<code><?php echo esc_html( Feed_Generator::get_feed_file_url() ); ?></code>
+					</p>
 
 					<?php if ( ! empty( $options['enable_security_key'] ) ) : ?>
 						<div class="security-badge">

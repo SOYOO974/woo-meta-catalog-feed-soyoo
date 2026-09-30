@@ -54,13 +54,7 @@ class Feed_Server {
 		$is_key_active = ! empty( $options['enable_security_key'] );
 		$token         = ! empty( $options['security_key'] ) ? trim( $options['security_key'] ) : '';
 
-		// If key security is NOT active and not forced, we can serve the direct static file URL.
-		if ( ! $is_key_active && ! $secure_only ) {
-			return Feed_Generator::get_feed_file_url();
-		}
-
-		// Otherwise serve via endpoint.
-		// Pretty rewrite URL: /feed/meta-catalog.xml
+		// Canonical pretty rewrite URL: /feed/meta-catalog.xml
 		$using_permalinks = (bool) get_option( 'permalink_structure' );
 		if ( $using_permalinks ) {
 			$base_url = home_url( '/feed/meta-catalog.xml' );
@@ -68,7 +62,7 @@ class Feed_Server {
 			$base_url = add_query_arg( 'meta_catalog_feed', '1', home_url( '/' ) );
 		}
 
-		if ( $is_key_active && ! empty( $token ) ) {
+		if ( ( $is_key_active || $secure_only ) && ! empty( $token ) ) {
 			$base_url = add_query_arg( 'feed_key', $token, $base_url );
 		}
 

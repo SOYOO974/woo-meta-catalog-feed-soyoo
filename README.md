@@ -58,11 +58,13 @@ Le flux produit respecte scrupuleusement la spécification **RSS 2.0 avec l'espa
 
 ## 🛠️ 3. Configuration dans Meta Commerce Manager
 
-### Étape 1 : Récupérer l'URL du flux
+### Étape 1 : Première génération & Récupération de l'URL du flux
 1. Rendez-vous dans votre administration WordPress sous **WooCommerce > Flux Meta Catalog**.
-2. Copiez l'URL mise en valeur dans l'encadré vert :
-   - Format standard : `https://votredomaine.fr/feed/meta-catalog.xml`
+2. **Lors du premier lancement**, cliquez sur **« Régénérer le flux maintenant »** pour compiler le catalogue (le moteur AJAX traite les lots en ~10-15 secondes).
+3. Copiez l'URL mise en valeur dans l'encadré vert :
+   - URL canonique optimisée : `https://votredomaine.fr/feed/meta-catalog.xml` (avec gestion de cache conditionnel ETag / 304)
    - Format sécurisé : `https://votredomaine.fr/feed/meta-catalog.xml?feed_key=VOTRE_JETON`
+   - URL statique directe : `https://votredomaine.fr/wp-content/uploads/feeds/meta-catalog.xml`
 
 ### Étape 2 : Ajouter la source de données dans Meta
 1. Accédez à [Meta Commerce Manager](https://business.facebook.com/commerce).
@@ -70,8 +72,8 @@ Le flux produit respecte scrupuleusement la spécification **RSS 2.0 avec l'espa
 3. Dans le menu latéral, cliquez sur **Catalogue > Sources de données**.
 4. Cliquez sur **Ajouter des articles** > **Flux de données (Data feed)**.
 5. Choisissez l'option **Flux programmé (Scheduled feed)**.
-6. Collez l'URL de votre flux SOYOO.
-7. Réglez la fréquence de mise à jour sur **Quotidienne** à **04h30 ou 05h00 du matin** (1 heure après la génération nocturne WordPress de 03h30).
+6. Collez l'URL de votre flux SOYOO (`https://votredomaine.fr/feed/meta-catalog.xml`).
+7. Réglez la fréquence de mise à jour sur **Quotidienne** à **04h30 ou 05h00 du matin** (1 heure après la génération nocturne automatique WordPress de 03h30).
 8. Définissez la devise par défaut (ex: `EUR - Euro`).
 9. Lancez l'importation initiale : Meta traitera immédiatement tous vos articles simples et déclinaisons.
 
