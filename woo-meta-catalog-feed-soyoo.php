@@ -25,17 +25,19 @@ define( 'WOO_META_CATALOG_FEED_DIR', plugin_dir_path( __FILE__ ) );
 define( 'WOO_META_CATALOG_FEED_URL', plugin_dir_url( __FILE__ ) );
 define( 'WOO_META_CATALOG_FEED_BASENAME', plugin_basename( __FILE__ ) );
 
-// 1. Initialize the Plugin Update Checker for GitHub releases.
-if ( file_exists( WOO_META_CATALOG_FEED_DIR . 'plugin-update-checker/plugin-update-checker.php' ) ) {
-	require_once WOO_META_CATALOG_FEED_DIR . 'plugin-update-checker/plugin-update-checker.php';
-	$soyoo_meta_catalog_checker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
-		'https://github.com/SOYOO974/woo-meta-catalog-feed-soyoo/',
-		__FILE__,
-		'woo-meta-catalog-feed-soyoo'
-	);
-	$soyoo_meta_catalog_checker->setBranch( 'main' );
-	$soyoo_meta_catalog_checker->getVcsApi()->enableReleaseAssets();
-}
+// Initialize the Plugin Update Checker for GitHub releases.
+require_once WOO_META_CATALOG_FEED_DIR . 'plugin-update-checker/plugin-update-checker.php';
+use YahnisElsts\PluginUpdateChecker\v5\PucFactory;
+
+$woo_meta_catalog_update_checker = PucFactory::buildUpdateChecker(
+	'https://github.com/SOYOO974/woo-meta-catalog-feed-soyoo/',
+	__FILE__,
+	'woo-meta-catalog-feed-soyoo'
+);
+
+// Set the branch that contains the stable release.
+$woo_meta_catalog_update_checker->setBranch( 'main' );
+$woo_meta_catalog_update_checker->getVcsApi()->enableReleaseAssets();
 
 // 2. Declare WooCommerce HPOS (High-Performance Order Storage) compatibility.
 add_action( 'before_woocommerce_init', function() {
