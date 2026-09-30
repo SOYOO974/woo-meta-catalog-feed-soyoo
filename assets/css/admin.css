@@ -339,3 +339,42 @@
 	font-size: 13px;
 	line-height: 1.6;
 }
+
+/* ==========================================================================
+   Admin Notices Isolation & Sanitization
+   ========================================================================== */
+
+/* Hide all third-party notices, update nags and alerts on this screen */
+body.woocommerce_page_woo-meta-catalog-feed .notice,
+body.woocommerce_page_woo-meta-catalog-feed .updated,
+body.woocommerce_page_woo-meta-catalog-feed .error,
+body.woocommerce_page_woo-meta-catalog-feed .update-nag,
+body.woocommerce_page_woo-meta-catalog-feed #wpbody-content > .notice,
+body.woocommerce_page_woo-meta-catalog-feed #wpbody-content > .updated,
+body.woocommerce_page_woo-meta-catalog-feed #wpbody-content > .error,
+body.woocommerce_page_woo-meta-catalog-feed #wpbody-content > .update-nag,
+body.woocommerce_page_woo-meta-catalog-feed .woo-meta-catalog-header .notice,
+body.woocommerce_page_woo-meta-catalog-feed .woo-meta-catalog-header .updated,
+body.woocommerce_page_woo-meta-catalog-feed .woo-meta-catalog-header .error {
+	display: none !important;
+}
+
+/* Official WP separator: hide visual appearance while retaining DOM marker */
+hr.wp-header-end {
+	visibility: hidden !important;
+	margin: 0 !important;
+	border: 0 !important;
+	height: 0 !important;
+	clear: both !important;
+}
+
+/* Allow and style our plugin's own settings notifications */
+body.woocommerce_page_woo-meta-catalog-feed .woo-meta-catalog-notices .notice,
+body.woocommerce_page_woo-meta-catalog-feed .woo-meta-catalog-notices .settings-error,
+body.woocommerce_page_woo-meta-catalog-feed .notice.woo-meta-allowed-notice {
+	display: block !important;
+	margin: 0 0 20px 0 !important;
+	border-radius: 6px;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+

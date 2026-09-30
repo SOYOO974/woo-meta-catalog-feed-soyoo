@@ -22,6 +22,8 @@ class Feed_Admin {
 	public function __construct() {
 		add_action( 'admin_menu', array( $this, 'register_menu' ), 65 );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_assets' ) );
+		add_action( 'admin_head', array( $this, 'suppress_admin_notices' ), 999 );
+		add_action( 'in_admin_header', array( $this, 'suppress_admin_notices' ), 999 );
 		add_action( 'wp_ajax_woo_meta_catalog_trigger_generation', array( $this, 'ajax_trigger_generation' ) );
 		add_action( 'wp_ajax_woo_meta_catalog_check_status', array( $this, 'ajax_check_status' ) );
 		add_action( 'wp_ajax_woo_meta_catalog_reset_lock', array( $this, 'ajax_reset_lock' ) );
@@ -32,7 +34,7 @@ class Feed_Admin {
 	 * Register submenu under WooCommerce.
 	 */
 	public function register_menu() {
-		add_submenu_page(
+		$hook_suffix = add_submenu_page(
 			'woocommerce',
 			__( 'Flux Meta Catalog', 'woo-meta-catalog' ),
 			__( 'Flux Meta Catalog', 'woo-meta-catalog' ),
@@ -40,6 +42,51 @@ class Feed_Admin {
 			'woo-meta-catalog-feed',
 			array( $this, 'render_page' )
 		);
+
+		if ( $hook_suffix ) {
+			add_action( 'load-' . $hook_suffix, array( $this, 'on_page_load' ) );
+		}
+	}
+
+	/**
+	 * Actions executed when the plugin settings page is loaded.
+	 */
+	public function on_page_load() {
+		add_action( 'admin_head', array( $this, 'suppress_admin_notices' ), 999 );
+		add_action( 'in_admin_header', array( $this, 'suppress_admin_notices' ), 999 );
+	}
+
+	/**
+	 * Check whether current admin screen belongs to this plugin.
+	 *
+	 * @return bool
+	 */
+	private function is_feed_admin_screen() {
+		if ( isset( $_GET['page'] ) && 'woo-meta-catalog-feed' === $_GET['page'] ) {
+			return true;
+		}
+
+		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
+		if ( $screen && ( 'woocommerce_page_woo-meta-catalog-feed' === $screen->id || false !== strpos( $screen->id, 'woo-meta-catalog-feed' ) ) ) {
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Suppress all third-party admin notices to keep our settings interface clean and focused.
+	 */
+	public function suppress_admin_notices() {
+		if ( ! $this->is_feed_admin_screen() ) {
+			return;
+		}
+
+		remove_all_actions( 'wp_admin_notices' );
+		remove_all_actions( 'admin_notices' );
+		remove_all_actions( 'all_admin_notices' );
+		remove_all_actions( 'user_admin_notices' );
+		remove_all_actions( 'network_admin_notices' );
 	}
 
 	/**
@@ -193,7 +240,6 @@ class Feed_Admin {
 			}
 		}
 
-		settings_errors( 'woo_meta_catalog_messages' );
 		?>
 		<div class="wrap woo-meta-catalog-wrap">
 			<header class="woo-meta-catalog-header">
@@ -210,6 +256,12 @@ class Feed_Admin {
 					<span class="badge-soyoo">SOYOO In-House</span>
 				</div>
 			</header>
+
+			<hr class="wp-header-end" />
+
+			<div class="woo-meta-catalog-notices">
+				<?php settings_errors( 'woo_meta_catalog_messages' ); ?>
+			</div>
 
 			<!-- CALLOUT GREEN BOX: FEED URL -->
 			<div class="woo-meta-feed-url-card">

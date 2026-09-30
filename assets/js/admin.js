@@ -10,6 +10,17 @@
 
 	$(document).ready(function() {
 
+		// 0. Sanitize Admin Notices - Strip any third-party notices that slipped into header or wrap
+		$('.woo-meta-catalog-header').find('.notice, .updated, .error, .update-nag').remove();
+		$('#wpbody-content > .notice, #wpbody-content > .updated, #wpbody-content > .error, #wpbody-content > .update-nag')
+			.not('.woo-meta-catalog-notices .notice')
+			.not('.woo-meta-allowed-notice')
+			.remove();
+		$('.woo-meta-catalog-wrap > .notice, .woo-meta-catalog-wrap > .updated, .woo-meta-catalog-wrap > .error')
+			.not('.woo-meta-catalog-notices *')
+			.not('.woo-meta-allowed-notice')
+			.remove();
+
 		// 1. Copy Feed URL to Clipboard
 		$('.btn-copy-feed').on('click', function(e) {
 			e.preventDefault();
