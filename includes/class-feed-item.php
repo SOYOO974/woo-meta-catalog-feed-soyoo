@@ -29,13 +29,26 @@ class Feed_Item {
 			return null;
 		}
 
-		$is_variation = ( null !== $parent && is_a( $parent, '\WC_Product' ) );
+		$is_variation          = ( null !== $parent && is_a( $parent, '\WC_Product' ) );
+		$target_for_visibility = $is_variation ? $parent : $product;
 
-		// 1. Stock & Availability check.
+		// 1. Visibility check (exclude hidden products).
+		$exclude_hidden = isset( $options['exclude_hidden'] ) ? ! empty( $options['exclude_hidden'] ) : true;
+		if ( $exclude_hidden && 'hidden' === $target_for_visibility->get_catalog_visibility() ) {
+			return null;
+		}
+
+		// 2. Stock & Availability check.
 		$is_in_stock  = $product->is_in_stock();
 		$availability = $is_in_stock ? 'in stock' : 'out of stock';
 
 		if ( ! empty( $options['exclude_out_of_stock'] ) && ! $is_in_stock ) {
+			return null;
+		}
+
+		// 3. Dead stock check (exclude products out of stock without recent sales or old creation date).
+		$dead_stock_days = ! empty( $options['exclude_dead_stock_days'] ) ? (int) $options['exclude_dead_stock_days'] : 0;
+		if ( $dead_stock_days > 0 && self::is_dead_stock( $product, $parent, $dead_stock_days ) ) {
 			return null;
 		}
 
@@ -313,6 +326,137 @@ class Feed_Item {
 	 */
 	public static function sanitize_cdata( $text ) {
 		return str_replace( ']]>', ']]&gt;', $text );
+	}
+
+	/**
+	 * Cache for product/variation last sale timestamps.
+	 *
+	 * @var array<string, int|null>
+	 */
+	protected static $sales_timestamp_cache = array();
+
+	/**
+	 * Check if WooCommerce Analytics order lookup table exists.
+	 *
+	 * @return bool
+	 */
+	public static function has_order_lookup_table() {
+		static $has_table = null;
+		if ( null === $has_table ) {
+			global $wpdb;
+			$table_name = $wpdb->prefix . 'wc_order_product_lookup';
+			$found      = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) );
+			$has_table  = ( $found === $table_name );
+		}
+		return $has_table;
+	}
+
+	/**
+	 * Get the last sale timestamp for a product or variation from wc_order_product_lookup.
+	 *
+	 * @param int $product_id   Product ID (or parent ID if variation).
+	 * @param int $variation_id Variation ID (0 if simple product).
+	 * @return int|null Timestamp of last sale, or null if no sales recorded.
+	 */
+	public static function get_last_sale_timestamp( $product_id, $variation_id = 0 ) {
+		$cache_key = $variation_id > 0 ? 'v_' . $variation_id : 'p_' . $product_id;
+		if ( array_key_exists( $cache_key, self::$sales_timestamp_cache ) ) {
+			return self::$sales_timestamp_cache[ $cache_key ];
+		}
+
+		if ( ! self::has_order_lookup_table() ) {
+			self::$sales_timestamp_cache[ $cache_key ] = null;
+			return null;
+		}
+
+		global $wpdb;
+		$table = $wpdb->prefix . 'wc_order_product_lookup';
+
+		if ( $variation_id > 0 ) {
+			$sql = $wpdb->prepare(
+				"SELECT MAX(date_created) FROM {$table} WHERE product_id = %d AND variation_id = %d",
+				$product_id,
+				$variation_id
+			);
+		} else {
+			$sql = $wpdb->prepare(
+				"SELECT MAX(date_created) FROM {$table} WHERE product_id = %d",
+				$product_id
+			);
+		}
+
+		$date_str  = $wpdb->get_var( $sql );
+		$timestamp = ( $date_str && '0000-00-00 00:00:00' !== $date_str ) ? strtotime( $date_str ) : null;
+
+		self::$sales_timestamp_cache[ $cache_key ] = $timestamp;
+		return $timestamp;
+	}
+
+	/**
+	 * Check whether a product or variation is considered "dead stock".
+	 *
+	 * A product is dead stock if:
+	 * 1. It is currently out of stock.
+	 * 2. AND either its last recorded sale is older than $threshold_days.
+	 * 3. OR it has never been sold and was created more than $threshold_days ago.
+	 *
+	 * @param \WC_Product      $product        Product or variation instance.
+	 * @param \WC_Product|null $parent         Parent product if current product is a variation.
+	 * @param int              $threshold_days Number of days threshold.
+	 * @return bool True if dead stock, false otherwise.
+	 */
+	public static function is_dead_stock( $product, $parent = null, $threshold_days = 0 ) {
+		if ( ! $product || ! is_a( $product, '\WC_Product' ) ) {
+			return false;
+		}
+
+		// In-stock products are NEVER dead stock.
+		if ( $product->is_in_stock() ) {
+			return false;
+		}
+
+		$threshold_days = (int) $threshold_days;
+		if ( $threshold_days <= 0 ) {
+			return false;
+		}
+
+		$cutoff_timestamp = current_time( 'timestamp' ) - ( $threshold_days * DAY_IN_SECONDS );
+
+		$is_variation = ( null !== $parent && is_a( $parent, '\WC_Product' ) );
+		$product_id   = $is_variation ? $parent->get_id() : $product->get_id();
+		$variation_id = $is_variation ? $product->get_id() : 0;
+
+		$last_sale = self::get_last_sale_timestamp( $product_id, $variation_id );
+
+		if ( null !== $last_sale && $last_sale > 0 ) {
+			// Product has sales history. Check if last sale was before cutoff.
+			return ( $last_sale < $cutoff_timestamp );
+		}
+
+		// No sales history found: check product creation date.
+		$date_created = $product->get_date_created();
+		if ( ! $date_created && $is_variation && $parent ) {
+			$date_created = $parent->get_date_created();
+		}
+
+		if ( $date_created ) {
+			return ( $date_created->getTimestamp() < $cutoff_timestamp );
+		}
+
+		// If no WC date object, default to post_date via get_post if available.
+		$post = get_post( $product->get_id() );
+		if ( $post && ! empty( $post->post_date_gmt ) && '0000-00-00 00:00:00' !== $post->post_date_gmt ) {
+			return ( strtotime( $post->post_date_gmt ) < $cutoff_timestamp );
+		}
+
+		return false;
+	}
+
+	/**
+	 * Reset sales timestamp cache.
+	 */
+	public static function reset_sales_cache() {
+		self::$sales_timestamp_cache = array();
 	}
 
 	/**
