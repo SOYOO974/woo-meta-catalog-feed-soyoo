@@ -3,7 +3,7 @@
  * Plugin Name:       Woo Meta Catalog Feed Soyoo
  * Plugin URI:        https://github.com/SOYOO974/woo-meta-catalog-feed-soyoo/
  * Description:       Générateur de flux catalogue XML haute performance, ultra-léger et autonome pour Meta Ads (Commerce Manager, Advantage+ Catalog Ads, retargeting DPA) et Google Shopping.
- * Version:           1.1.0
+ * Version:           1.2.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            SOYOO
@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin constants.
-define( 'WOO_META_CATALOG_FEED_VERSION', '1.1.0' );
+define( 'WOO_META_CATALOG_FEED_VERSION', '1.2.0' );
 define( 'WOO_META_CATALOG_FEED_FILE', __FILE__ );
 define( 'WOO_META_CATALOG_FEED_DIR', plugin_dir_path( __FILE__ ) );
 define( 'WOO_META_CATALOG_FEED_URL', plugin_dir_url( __FILE__ ) );
@@ -56,18 +56,29 @@ register_deactivation_hook( __FILE__, 'woo_meta_catalog_feed_deactivate' );
 function woo_meta_catalog_feed_activate() {
 	// Initialize default settings if not set.
 	$default_settings = array(
-		'exclude_out_of_stock' => 0,
-		'exclude_no_image'     => 1,
-		'default_brand'        => get_bloginfo( 'name' ),
-		'brand_attribute'      => '',
-		'enable_utms'          => 1,
-		'utm_source'           => 'facebook',
-		'utm_medium'           => 'catalog',
-		'utm_campaign'         => 'meta_feed',
-		'enable_security_key'  => 0,
-		'security_key'         => wp_generate_password( 24, false, false ),
-		'batch_size'           => 200,
-		'daily_time'           => '03:30',
+		'exclude_out_of_stock'     => 0,
+		'exclude_no_image'         => 1,
+		'default_brand'            => get_bloginfo( 'name' ),
+		'brand_attribute'          => '',
+		'enable_utms'              => 1,
+		'utm_source'               => 'facebook',
+		'utm_medium'               => 'catalog',
+		'utm_campaign'             => 'meta_feed',
+		'enable_security_key'      => 0,
+		'security_key'             => wp_generate_password( 24, false, false ),
+		'batch_size'               => 200,
+		'daily_time'               => '03:30',
+		'label_include_categories' => 0,
+		'label_include_tags'       => 0,
+		'label_enable_promo'       => 0,
+		'label_promo_tag'          => 'promo',
+		'label_enable_new'         => 0,
+		'label_new_days'           => 30,
+		'label_new_tag'            => 'nouveaute',
+		'label_enable_bestseller'  => 0,
+		'label_bestseller_mode'    => 'count',
+		'label_bestseller_value'   => 50,
+		'label_bestseller_tag'     => 'bestseller',
 	);
 
 	$existing = get_option( 'woo_meta_catalog_settings', array() );

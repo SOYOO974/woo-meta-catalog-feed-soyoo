@@ -232,6 +232,12 @@ class Feed_Item {
 			$xml .= "\t\t\t<g:product_type><![CDATA[" . self::sanitize_cdata( $product_type ) . "]]></g:product_type>\n";
 		}
 
+		// Internal labels for Meta Commerce Manager Product Sets segmentation.
+		$internal_labels = self::build_internal_labels( $product, $parent, $options );
+		if ( ! empty( $internal_labels ) ) {
+			$xml .= "\t\t\t<g:internal_label><![CDATA[" . self::sanitize_cdata( $internal_labels ) . "]]></g:internal_label>\n";
+		}
+
 		// Stock quantity if managed.
 		if ( $product->managing_stock() ) {
 			$stock_qty = $product->get_stock_quantity();
@@ -334,6 +340,13 @@ class Feed_Item {
 	 * @var array<string, int|null>
 	 */
 	protected static $sales_timestamp_cache = array();
+
+	/**
+	 * Cache for bestselling product IDs lookup map.
+	 *
+	 * @var array<int, bool>|null
+	 */
+	protected static $bestseller_ids_cache = null;
 
 	/**
 	 * Check if WooCommerce Analytics order lookup table exists.
@@ -453,10 +466,281 @@ class Feed_Item {
 	}
 
 	/**
-	 * Reset sales timestamp cache.
+	 * Reset sales timestamp and bestseller cache.
 	 */
 	public static function reset_sales_cache() {
 		self::$sales_timestamp_cache = array();
+		self::$bestseller_ids_cache   = null;
+	}
+
+	/**
+	 * Sanitize an individual label for Meta internal_label array.
+	 * Strips quotes, apostrophes, commas, brackets, slashes and control characters.
+	 *
+	 * @param string $text Raw label.
+	 * @return string Sanitized label, max 110 characters.
+	 */
+	public static function clean_internal_label( $text ) {
+		if ( empty( $text ) ) {
+			return '';
+		}
+
+		$text = strip_shortcodes( $text );
+		$text = wp_strip_all_tags( $text );
+		$text = html_entity_decode( $text, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+
+		// Replace ampersand with word 'et' for cleaner semantic naming in French stores.
+		$text = str_replace( '&', 'et', $text );
+
+		// Remove quotes, apostrophes, commas, brackets, braces, and backslashes to avoid breaking Meta array syntax ['val1','val2'].
+		$text = str_replace( array( "'", '"', '`', '’', '‘', '[', ']', '{', '}', ',', '\\' ), ' ', $text );
+
+		// Remove non-printable control characters.
+		$text = preg_replace( '/[\x00-\x1F\x7F]/u', '', $text );
+
+		// Collapse multiple spaces.
+		$text = preg_replace( '/\s+/u', ' ', $text );
+		$text = trim( $text );
+
+		// Meta limit: 110 characters maximum per label.
+		if ( mb_strlen( $text, 'UTF-8' ) > 110 ) {
+			$text = mb_substr( $text, 0, 110, 'UTF-8' );
+			$text = trim( $text );
+		}
+
+		return $text;
+	}
+
+	/**
+	 * Check if a product or variation was created recently.
+	 *
+	 * @param \WC_Product      $product Current product or variation.
+	 * @param \WC_Product|null $parent  Parent product if variation.
+	 * @param int              $days    Threshold in days.
+	 * @return bool True if created within the threshold.
+	 */
+	public static function is_new_product( $product, $parent = null, $days = 30 ) {
+		$days = (int) $days;
+		if ( $days <= 0 ) {
+			return false;
+		}
+
+		$cutoff = current_time( 'timestamp' ) - ( $days * DAY_IN_SECONDS );
+		$target = ( null !== $parent && is_a( $parent, '\WC_Product' ) ) ? $parent : $product;
+
+		$date_created = $target->get_date_created();
+		if ( $date_created ) {
+			return ( $date_created->getTimestamp() >= $cutoff );
+		}
+
+		$post = get_post( $target->get_id() );
+		if ( $post && ! empty( $post->post_date_gmt ) && '0000-00-00 00:00:00' !== $post->post_date_gmt ) {
+			return ( strtotime( $post->post_date_gmt ) >= $cutoff );
+		}
+
+		return false;
+	}
+
+	/**
+	 * Retrieve top bestselling in-stock product IDs mapped as [ ID => true ].
+	 *
+	 * @param array $options Plugin settings.
+	 * @return array<int, bool> Map of bestseller IDs.
+	 */
+	public static function get_bestseller_ids( $options = array() ) {
+		if ( null !== self::$bestseller_ids_cache ) {
+			return self::$bestseller_ids_cache;
+		}
+
+		global $wpdb;
+		$mode  = ! empty( $options['label_bestseller_mode'] ) ? $options['label_bestseller_mode'] : 'count';
+		$value = isset( $options['label_bestseller_value'] ) ? (float) $options['label_bestseller_value'] : 50;
+
+		if ( $value <= 0 ) {
+			self::$bestseller_ids_cache = array();
+			return self::$bestseller_ids_cache;
+		}
+
+		$lookup_table = $wpdb->prefix . 'wc_product_meta_lookup';
+		$has_lookup   = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $lookup_table ) ) === $lookup_table );
+
+		$limit = 50;
+
+		if ( 'percentage' === $mode ) {
+			$percent = min( 100, max( 1, $value ) );
+			if ( $has_lookup ) {
+				$total_instock = (int) $wpdb->get_var(
+					"SELECT COUNT(DISTINCT product_id) FROM {$lookup_table} WHERE stock_status = 'instock'"
+				);
+			} else {
+				$total_instock = (int) $wpdb->get_var(
+					"SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p
+					 INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = '_stock_status'
+					 WHERE p.post_type = 'product' AND p.post_status = 'publish' AND pm.meta_value = 'instock'"
+				);
+			}
+
+			if ( $total_instock <= 0 ) {
+				self::$bestseller_ids_cache = array();
+				return self::$bestseller_ids_cache;
+			}
+
+			$limit = max( 1, (int) round( ( $percent / 100 ) * $total_instock ) );
+		} else {
+			$limit = max( 1, (int) $value );
+		}
+
+		if ( $has_lookup ) {
+			$sql = $wpdb->prepare(
+				"SELECT product_id FROM {$lookup_table} 
+				 WHERE stock_status = 'instock' AND total_sales > 0 
+				 ORDER BY total_sales DESC 
+				 LIMIT %d",
+				$limit
+			);
+			$ids = $wpdb->get_col( $sql );
+		} else {
+			$sql = $wpdb->prepare(
+				"SELECT p.ID FROM {$wpdb->posts} p
+				 INNER JOIN {$wpdb->postmeta} pm_sales ON p.ID = pm_sales.post_id AND pm_sales.meta_key = 'total_sales'
+				 INNER JOIN {$wpdb->postmeta} pm_stock ON p.ID = pm_stock.post_id AND pm_stock.meta_key = '_stock_status'
+				 WHERE p.post_type = 'product' AND p.post_status = 'publish' 
+				   AND pm_stock.meta_value = 'instock' 
+				   AND CAST(pm_sales.meta_value AS UNSIGNED) > 0
+				 ORDER BY CAST(pm_sales.meta_value AS UNSIGNED) DESC 
+				 LIMIT %d",
+				$limit
+			);
+			$ids = $wpdb->get_col( $sql );
+		}
+
+		if ( empty( $ids ) ) {
+			self::$bestseller_ids_cache = array();
+		} else {
+			self::$bestseller_ids_cache = array_fill_keys( array_map( 'intval', $ids ), true );
+		}
+
+		return self::$bestseller_ids_cache;
+	}
+
+	/**
+	 * Check if a product or its parent is identified as a bestseller.
+	 *
+	 * @param \WC_Product      $product Current product or variation.
+	 * @param \WC_Product|null $parent  Parent product if variation.
+	 * @param array            $options Plugin settings.
+	 * @return bool
+	 */
+	public static function is_bestseller( $product, $parent = null, $options = array() ) {
+		$bestseller_map = self::get_bestseller_ids( $options );
+		if ( empty( $bestseller_map ) ) {
+			return false;
+		}
+
+		$pid = (int) $product->get_id();
+		if ( isset( $bestseller_map[ $pid ] ) ) {
+			return true;
+		}
+
+		if ( $parent ) {
+			$parent_id = (int) $parent->get_id();
+			if ( isset( $bestseller_map[ $parent_id ] ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Build Meta-compliant internal_label string for <g:internal_label>.
+	 * Syntax: ['label1','label2','label3']
+	 *
+	 * @param \WC_Product      $product Current product or variation.
+	 * @param \WC_Product|null $parent  Parent product if variation.
+	 * @param array            $options Plugin settings.
+	 * @return string|null Formatted string or null if empty.
+	 */
+	public static function build_internal_labels( $product, $parent = null, $options = array() ) {
+		$labels    = array();
+		$target    = ( null !== $parent && is_a( $parent, '\WC_Product' ) ) ? $parent : $product;
+		$target_id = $target->get_id();
+
+		// 1. Categories (product_cat).
+		if ( ! empty( $options['label_include_categories'] ) ) {
+			$cats = get_the_terms( $target_id, 'product_cat' );
+			if ( $cats && ! is_wp_error( $cats ) ) {
+				foreach ( $cats as $cat ) {
+					$labels[] = $cat->name;
+				}
+			}
+		}
+
+		// 2. Product Tags (product_tag).
+		if ( ! empty( $options['label_include_tags'] ) ) {
+			$tags = get_the_terms( $target_id, 'product_tag' );
+			if ( $tags && ! is_wp_error( $tags ) ) {
+				foreach ( $tags as $tag ) {
+					$labels[] = $tag->name;
+				}
+			}
+		}
+
+		// 3. On-sale / Promo flag.
+		if ( ! empty( $options['label_enable_promo'] ) ) {
+			$is_on_sale = $product->is_on_sale() || ( $parent && $parent->is_on_sale() );
+			if ( $is_on_sale ) {
+				$promo_tag = ! empty( $options['label_promo_tag'] ) ? $options['label_promo_tag'] : 'promo';
+				$labels[]  = $promo_tag;
+			}
+		}
+
+		// 4. New product flag.
+		if ( ! empty( $options['label_enable_new'] ) ) {
+			$days = ! empty( $options['label_new_days'] ) ? (int) $options['label_new_days'] : 30;
+			if ( $days > 0 && self::is_new_product( $product, $parent, $days ) ) {
+				$new_tag  = ! empty( $options['label_new_tag'] ) ? $options['label_new_tag'] : 'nouveaute';
+				$labels[] = $new_tag;
+			}
+		}
+
+		// 5. Bestseller flag.
+		if ( ! empty( $options['label_enable_bestseller'] ) ) {
+			if ( self::is_bestseller( $product, $parent, $options ) ) {
+				$bestseller_tag = ! empty( $options['label_bestseller_tag'] ) ? $options['label_bestseller_tag'] : 'bestseller';
+				$labels[]       = $bestseller_tag;
+			}
+		}
+
+		/**
+		 * Filters the raw internal labels list before sanitization.
+		 *
+		 * @param array            $labels  Raw list of labels.
+		 * @param \WC_Product      $product Current product or variation.
+		 * @param \WC_Product|null $parent  Parent product if variation.
+		 * @param array            $options Plugin settings.
+		 */
+		$labels = apply_filters( 'woo_meta_catalog_internal_labels', $labels, $product, $parent, $options );
+
+		if ( empty( $labels ) || ! is_array( $labels ) ) {
+			return null;
+		}
+
+		$clean_labels = array();
+		foreach ( $labels as $raw_label ) {
+			$clean = self::clean_internal_label( (string) $raw_label );
+			if ( '' !== $clean ) {
+				$clean_labels[] = $clean;
+			}
+		}
+
+		$clean_labels = array_values( array_unique( $clean_labels ) );
+
+		if ( empty( $clean_labels ) ) {
+			return null;
+		}
+
+		return "['" . implode( "','", $clean_labels ) . "']";
 	}
 
 	/**

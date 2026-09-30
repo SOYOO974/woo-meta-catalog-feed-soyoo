@@ -262,6 +262,19 @@ class Feed_Admin {
 			'security_key'            => sanitize_text_field( wp_unslash( $_POST['security_key'] ?? '' ) ),
 			'batch_size'              => max( 50, min( 1000, intval( $_POST['batch_size'] ?? 200 ) ) ),
 			'daily_time'              => sanitize_text_field( wp_unslash( $_POST['daily_time'] ?? '03:30' ) ),
+
+			// Meta internal labels settings.
+			'label_include_categories' => isset( $_POST['label_include_categories'] ) ? 1 : 0,
+			'label_include_tags'       => isset( $_POST['label_include_tags'] ) ? 1 : 0,
+			'label_enable_promo'       => isset( $_POST['label_enable_promo'] ) ? 1 : 0,
+			'label_promo_tag'          => sanitize_text_field( wp_unslash( $_POST['label_promo_tag'] ?? 'promo' ) ),
+			'label_enable_new'         => isset( $_POST['label_enable_new'] ) ? 1 : 0,
+			'label_new_days'           => max( 1, intval( $_POST['label_new_days'] ?? 30 ) ),
+			'label_new_tag'            => sanitize_text_field( wp_unslash( $_POST['label_new_tag'] ?? 'nouveaute' ) ),
+			'label_enable_bestseller'  => isset( $_POST['label_enable_bestseller'] ) ? 1 : 0,
+			'label_bestseller_mode'    => ( isset( $_POST['label_bestseller_mode'] ) && 'percentage' === $_POST['label_bestseller_mode'] ) ? 'percentage' : 'count',
+			'label_bestseller_value'   => max( 1, intval( $_POST['label_bestseller_value'] ?? 50 ) ),
+			'label_bestseller_tag'     => sanitize_text_field( wp_unslash( $_POST['label_bestseller_tag'] ?? 'bestseller' ) ),
 		);
 
 		update_option( 'woo_meta_catalog_settings', $settings );
@@ -610,6 +623,120 @@ class Feed_Admin {
 									</div>
 									<p class="description">
 										<?php esc_html_e( 'Empêche les outils de scraping concurrentiel de télécharger votre catalogue complet sans autorisation.', 'woo-meta-catalog' ); ?>
+									</p>
+								</td>
+							</tr>
+
+							<!-- META INTERNAL LABELS & PRODUCT SETS -->
+							<tr>
+								<th colspan="2" style="padding-top: 25px; padding-bottom: 10px;">
+									<h3 style="margin: 0; padding-bottom: 6px; border-bottom: 1px solid #dcdcde; color: #1d2327;">
+										<span class="dashicons dashicons-tag" style="margin-right: 6px;"></span>
+										<?php esc_html_e( 'Étiquettes internes Meta (<g:internal_label> / Ensembles de produits)', 'woo-meta-catalog' ); ?>
+									</h3>
+									<p class="description" style="margin-top: 6px;">
+										<?php esc_html_e( 'Permet de segmenter vos produits dans Meta Commerce Manager pour créer des ensembles dynamiques (Product Sets) sans limite et sans déclencher de réexamen publicitaire.', 'woo-meta-catalog' ); ?>
+									</p>
+								</th>
+							</tr>
+
+							<!-- INCLUDE CATEGORIES -->
+							<tr>
+								<th scope="row"><?php esc_html_e( 'Catégories produits', 'woo-meta-catalog' ); ?></th>
+								<td>
+									<label for="label_include_categories">
+										<input name="label_include_categories" type="checkbox" id="label_include_categories" value="1" <?php checked( ! empty( $options['label_include_categories'] ) ); ?> />
+										<?php esc_html_e( 'Inclure toutes les catégories WooCommerce (product_cat)', 'woo-meta-catalog' ); ?>
+									</label>
+									<p class="description">
+										<?php esc_html_e( 'Ajoute le nom de chaque catégorie du produit dans l\'étiquette interne. Idéal pour filtrer et créer des ensembles par catégorie dans Meta Commerce Manager.', 'woo-meta-catalog' ); ?>
+									</p>
+								</td>
+							</tr>
+
+							<!-- INCLUDE TAGS -->
+							<tr>
+								<th scope="row"><?php esc_html_e( 'Étiquettes WooCommerce', 'woo-meta-catalog' ); ?></th>
+								<td>
+									<label for="label_include_tags">
+										<input name="label_include_tags" type="checkbox" id="label_include_tags" value="1" <?php checked( ! empty( $options['label_include_tags'] ) ); ?> />
+										<?php esc_html_e( 'Inclure les étiquettes WooCommerce (product_tag)', 'woo-meta-catalog' ); ?>
+									</label>
+									<p class="description">
+										<?php esc_html_e( 'Ajoute les étiquettes manuelles du produit dans l\'étiquette interne.', 'woo-meta-catalog' ); ?>
+									</p>
+								</td>
+							</tr>
+
+							<!-- PROMO / ON SALE FLAG -->
+							<tr>
+								<th scope="row"><?php esc_html_e( 'Marqueur Promotion', 'woo-meta-catalog' ); ?></th>
+								<td>
+									<label for="label_enable_promo">
+										<input name="label_enable_promo" type="checkbox" id="label_enable_promo" value="1" <?php checked( ! empty( $options['label_enable_promo'] ) ); ?> />
+										<?php esc_html_e( 'Ajouter automatiquement un marqueur pour les produits en solde', 'woo-meta-catalog' ); ?>
+									</label>
+									<div style="margin-top: 8px;">
+										<label for="label_promo_tag"><?php esc_html_e( 'Nom du marqueur :', 'woo-meta-catalog' ); ?></label>
+										<input name="label_promo_tag" type="text" id="label_promo_tag" value="<?php echo esc_attr( $options['label_promo_tag'] ?? 'promo' ); ?>" class="regular-text" style="max-width: 160px;" />
+									</div>
+									<p class="description">
+										<?php esc_html_e( 'Détecte si le produit ou sa variante est en promotion et lui attribue cette étiquette (ex: promo). Permet de créer un ensemble dynamique "Soldes / Promos" dans Meta en 1 clic.', 'woo-meta-catalog' ); ?>
+									</p>
+								</td>
+							</tr>
+
+							<!-- NEW PRODUCT FLAG -->
+							<tr>
+								<th scope="row"><?php esc_html_e( 'Marqueur Nouveauté', 'woo-meta-catalog' ); ?></th>
+								<td>
+									<label for="label_enable_new">
+										<input name="label_enable_new" type="checkbox" id="label_enable_new" value="1" <?php checked( ! empty( $options['label_enable_new'] ) ); ?> />
+										<?php esc_html_e( 'Ajouter automatiquement un marqueur pour les nouveautés', 'woo-meta-catalog' ); ?>
+									</label>
+									<div style="margin-top: 8px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+										<div>
+											<label for="label_new_days"><?php esc_html_e( 'Créé depuis moins de :', 'woo-meta-catalog' ); ?></label>
+											<input name="label_new_days" type="number" min="1" max="365" id="label_new_days" value="<?php echo esc_attr( $options['label_new_days'] ?? 30 ); ?>" class="small-text" /> <?php esc_html_e( 'jours', 'woo-meta-catalog' ); ?>
+										</div>
+										<div>
+											<label for="label_new_tag"><?php esc_html_e( 'Nom du marqueur :', 'woo-meta-catalog' ); ?></label>
+											<input name="label_new_tag" type="text" id="label_new_tag" value="<?php echo esc_attr( $options['label_new_tag'] ?? 'nouveaute' ); ?>" class="regular-text" style="max-width: 160px;" />
+										</div>
+									</div>
+									<p class="description">
+										<?php esc_html_e( 'Attribue automatiquement le tag spécifié aux produits créés récemment pour créer un ensemble "Nouveautés" dynamique dans Meta.', 'woo-meta-catalog' ); ?>
+									</p>
+								</td>
+							</tr>
+
+							<!-- BESTSELLER FLAG -->
+							<tr>
+								<th scope="row"><?php esc_html_e( 'Marqueur Best-Seller', 'woo-meta-catalog' ); ?></th>
+								<td>
+									<label for="label_enable_bestseller">
+										<input name="label_enable_bestseller" type="checkbox" id="label_enable_bestseller" value="1" <?php checked( ! empty( $options['label_enable_bestseller'] ) ); ?> />
+										<?php esc_html_e( 'Ajouter automatiquement un marqueur pour les meilleures ventes', 'woo-meta-catalog' ); ?>
+									</label>
+									<div style="margin-top: 8px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+										<div>
+											<label for="label_bestseller_mode"><?php esc_html_e( 'Mode de calcul :', 'woo-meta-catalog' ); ?></label>
+											<select name="label_bestseller_mode" id="label_bestseller_mode">
+												<option value="count" <?php selected( ( $options['label_bestseller_mode'] ?? 'count' ), 'count' ); ?>><?php esc_html_e( 'Nombre fixe de produits', 'woo-meta-catalog' ); ?></option>
+												<option value="percentage" <?php selected( ( $options['label_bestseller_mode'] ?? 'count' ), 'percentage' ); ?>><?php esc_html_e( 'Pourcentage des produits en stock (%)', 'woo-meta-catalog' ); ?></option>
+											</select>
+										</div>
+										<div>
+											<label for="label_bestseller_value"><?php esc_html_e( 'Valeur (Top N ou %) :', 'woo-meta-catalog' ); ?></label>
+											<input name="label_bestseller_value" type="number" min="1" id="label_bestseller_value" value="<?php echo esc_attr( $options['label_bestseller_value'] ?? 50 ); ?>" class="small-text" />
+										</div>
+										<div>
+											<label for="label_bestseller_tag"><?php esc_html_e( 'Nom du marqueur :', 'woo-meta-catalog' ); ?></label>
+											<input name="label_bestseller_tag" type="text" id="label_bestseller_tag" value="<?php echo esc_attr( $options['label_bestseller_tag'] ?? 'bestseller' ); ?>" class="regular-text" style="max-width: 160px;" />
+										</div>
+									</div>
+									<p class="description">
+										<?php esc_html_e( 'Identifie automatiquement les produits en stock ayant le plus grand volume de ventes historiques (total_sales > 0) et leur applique l\'étiquette bestseller. Idéal pour cibler vos bestsellers en Advantage+ Catalog Ads.', 'woo-meta-catalog' ); ?>
 									</p>
 								</td>
 							</tr>
