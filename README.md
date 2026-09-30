@@ -115,13 +115,19 @@ add_action( 'woo_meta_catalog_feed_generated', function( $file_path, $total_item
 
 ## 📦 6. Packaging & Déploiement
 
-Pour générer l'archive ZIP installable prête pour le client :
+Le déploiement est entièrement automatisé via les **Releases GitHub** et le système **Plugin Update Checker (PUC)**. Aucun déploiement FTP manuel n'est requis par défaut.
 
-Exécutez dans un terminal PowerShell :
-```powershell
-.\bin\build-zip.ps1
-```
-Le script effectuera une analyse syntaxique stricte (`php -l`) sur chaque fichier source avant de générer `woo-meta-catalog-feed-soyoo.zip` à la racine.
+1. **Génération de l'archive ZIP** :
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\bin\build-zip.ps1
+   ```
+   Le script effectue une analyse syntaxique stricte (`php -l`) sur chaque fichier source avant de générer l'archive `woo-meta-catalog-feed-soyoo.zip` avec arborescence compatible Linux.
+
+2. **Publication de la Release GitHub** :
+   ```powershell
+   gh release create vX.Y.Z woo-meta-catalog-feed-soyoo.zip --title "vX.Y.Z - <Titre>" --notes "<Changelog>"
+   ```
+   Les sites sous gestion SOYOO équipés de l'extension reçoivent automatiquement la notification de mise à jour dans le tableau de bord WordPress et s'actualisent en un clic.
 
 ---
 

@@ -64,9 +64,11 @@ if (Test-Path $ZipPath) {
     Remove-Item -Path $ZipPath -Force
 }
 
-# 5. Création de l'archive ZIP
+# 5. Création de l'archive ZIP (via tar pour garantir les forward slashes / compatibles Linux/WordPress)
 Write-Host "3. Compression de l'archive $ZipName..." -ForegroundColor Yellow
-Compress-Archive -Path $StagingDir -DestinationPath $ZipPath -CompressionLevel Optimal
+Push-Location $StagingRoot
+tar -a -cf $ZipPath $PluginSlug
+Pop-Location
 
 # 6. Nettoyage du staging
 Remove-Item -Path $StagingRoot -Recurse -Force
