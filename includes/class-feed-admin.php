@@ -316,10 +316,6 @@ class Feed_Admin {
 					</h1>
 					<p class="subtitle"><?php esc_html_e( 'Générateur de flux XML optimisé pour Meta Commerce Manager, Advantage+ Catalog Ads et Google Shopping.', 'woo-meta-catalog' ); ?></p>
 				</div>
-				<div class="header-right">
-					<span class="badge-hpos"><span class="dashicons dashicons-yes-alt"></span> HPOS Ready</span>
-					<span class="badge-soyoo">SOYOO In-House</span>
-				</div>
 			</header>
 
 			<hr class="wp-header-end" />
@@ -348,13 +344,13 @@ class Feed_Admin {
 					
 					<div class="url-input-group">
 						<input type="text" id="woo-meta-feed-url-input" class="large-text code" value="<?php echo esc_url( $feed_url ); ?>" readonly />
-						<button type="button" class="button button-primary button-hero btn-copy-feed" data-target="#woo-meta-feed-url-input">
+						<button type="button" class="button button-primary btn-copy-feed" data-target="#woo-meta-feed-url-input">
 							<span class="dashicons dashicons-clipboard"></span>
 							<span class="copy-text"><?php esc_html_e( 'Copier l\'URL', 'woo-meta-catalog' ); ?></span>
 						</button>
-						<a href="<?php echo esc_url( $feed_url ); ?>" target="_blank" class="button button-secondary button-hero">
+						<a href="<?php echo esc_url( $feed_url ); ?>" target="_blank" class="button button-secondary btn-test-feed">
 							<span class="dashicons dashicons-external"></span>
-							<?php esc_html_e( 'Tester le flux', 'woo-meta-catalog' ); ?>
+							<span class="btn-text"><?php esc_html_e( 'Tester le flux', 'woo-meta-catalog' ); ?></span>
 						</a>
 					</div>
 
