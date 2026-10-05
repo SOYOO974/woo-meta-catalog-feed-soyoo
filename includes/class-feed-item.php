@@ -69,7 +69,21 @@ class Feed_Item {
 
 		if ( ! empty( $image_url ) ) {
 			$image_url = set_url_scheme( $image_url, 'https' );
+			if ( ! empty( $options['image_version'] ) ) {
+				$image_url = add_query_arg( 'v', rawurlencode( (string) $options['image_version'] ), $image_url );
+			}
 		}
+
+		/**
+		 * Filter the main catalog image URL.
+		 *
+		 * @param string           $image_url Primary image URL.
+		 * @param int              $image_id  Attachment ID.
+		 * @param \WC_Product      $product   Current product or variation.
+		 * @param \WC_Product|null $parent    Parent product if variation.
+		 * @param array            $options   Feed generation options.
+		 */
+		$image_url = apply_filters( 'woo_meta_catalog_image_url', $image_url, $image_id, $product, $parent, $options );
 
 		// 4. Title formatting.
 		if ( $is_variation ) {
@@ -166,7 +180,11 @@ class Feed_Item {
 				}
 				$gal_url = wp_get_attachment_image_url( $gal_id, 'full' );
 				if ( $gal_url ) {
-					$additional_images[] = set_url_scheme( $gal_url, 'https' );
+					$full_gal_url = set_url_scheme( $gal_url, 'https' );
+					if ( ! empty( $options['image_version'] ) ) {
+						$full_gal_url = add_query_arg( 'v', rawurlencode( (string) $options['image_version'] ), $full_gal_url );
+					}
+					$additional_images[] = $full_gal_url;
 					$count++;
 					if ( $count >= 5 ) {
 						break;

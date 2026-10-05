@@ -238,6 +238,14 @@
 			});
 		});
 
+		// 5. Bust Image Cache Version
+		$('#btn-bust-image-cache').on('click', function(e) {
+			e.preventDefault();
+			var timestamp = Math.floor(Date.now() / 1000);
+			$('#image_version').val(timestamp);
+			alert('Nouvelle version d\'image générée (' + timestamp + '). Enregistrez les réglages puis régénérez le flux pour forcer Meta à retélécharger toutes les photos.');
+		});
+
 		function stopLoading($btn) {
 			$btn.removeClass('loading').prop('disabled', false);
 		}

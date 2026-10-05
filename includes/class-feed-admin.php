@@ -252,6 +252,7 @@ class Feed_Admin {
 			'exclude_dead_stock_days' => max( 0, intval( $_POST['exclude_dead_stock_days'] ?? 0 ) ),
 			'exclude_out_of_stock'    => isset( $_POST['exclude_out_of_stock'] ) ? 1 : 0,
 			'exclude_no_image'        => isset( $_POST['exclude_no_image'] ) ? 1 : 0,
+			'image_version'           => sanitize_text_field( wp_unslash( $_POST['image_version'] ?? '' ) ),
 			'default_brand'           => sanitize_text_field( wp_unslash( $_POST['default_brand'] ?? '' ) ),
 			'brand_attribute'         => sanitize_text_field( wp_unslash( $_POST['brand_attribute'] ?? '' ) ),
 			'enable_utms'             => isset( $_POST['enable_utms'] ) ? 1 : 0,
@@ -552,6 +553,23 @@ class Feed_Admin {
 									</label>
 									<p class="description">
 										<?php esc_html_e( 'Conseillé (Oui) pour éviter les rejets de conformité dans Meta Commerce Manager.', 'woo-meta-catalog' ); ?>
+									</p>
+								</td>
+							</tr>
+
+							<!-- IMAGE CACHE BUSTING -->
+							<tr>
+								<th scope="row"><label for="image_version"><?php esc_html_e( 'Version de cache des images (?v=...)', 'woo-meta-catalog' ); ?></label></th>
+								<td>
+									<div style="display: flex; gap: 8px; align-items: center; max-width: 520px;">
+										<input name="image_version" type="text" id="image_version" value="<?php echo esc_attr( $options['image_version'] ?? '' ); ?>" class="regular-text" placeholder="<?php esc_attr_e( 'ex: 2 ou timestamp', 'woo-meta-catalog' ); ?>" />
+										<button type="button" class="button button-secondary" id="btn-bust-image-cache" title="<?php esc_attr_e( 'Génère un timestamp pour forcer Meta à retélécharger toutes les images', 'woo-meta-catalog' ); ?>">
+											<span class="dashicons dashicons-update" style="vertical-align: text-top;"></span>
+											<?php esc_html_e( 'Purger le cache Meta (timestamp)', 'woo-meta-catalog' ); ?>
+										</button>
+									</div>
+									<p class="description">
+										<?php esc_html_e( 'Ajoute un paramètre ?v=... aux URLs des images (<g:image_link> et <g:additional_image_link>). Permet d\'invalider immédiatement le cache de Meta Commerce Manager pour forcer le retéléchargement complet des visuels.', 'woo-meta-catalog' ); ?>
 									</p>
 								</td>
 							</tr>
