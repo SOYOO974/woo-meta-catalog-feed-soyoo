@@ -3,7 +3,7 @@
  * Plugin Name:       Woo Meta Catalog Feed Soyoo
  * Plugin URI:        https://github.com/SOYOO974/woo-meta-catalog-feed-soyoo/
  * Description:       Générateur de flux catalogue XML haute performance, ultra-léger et autonome pour Meta Ads (Commerce Manager, Advantage+ Catalog Ads, retargeting DPA) et Google Shopping.
- * Version:           1.2.0
+ * Version:           1.3.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            SOYOO
@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin constants.
-define( 'WOO_META_CATALOG_FEED_VERSION', '1.2.0' );
+define( 'WOO_META_CATALOG_FEED_VERSION', '1.3.0' );
 define( 'WOO_META_CATALOG_FEED_FILE', __FILE__ );
 define( 'WOO_META_CATALOG_FEED_DIR', plugin_dir_path( __FILE__ ) );
 define( 'WOO_META_CATALOG_FEED_URL', plugin_dir_url( __FILE__ ) );
@@ -143,6 +143,20 @@ function woo_meta_catalog_feed_init() {
 
 	// Register WP-CLI commands if running in CLI.
 	\SOYOO\MetaCatalog\Feed_CLI::register();
+
+	// Inter-plugin contract: expose the exact catalog <g:id> to woo-fb-tracking-server-side
+	// (v2.1.0+, "auto" mode). The feed is the single source of truth for Meta content IDs.
+	add_filter(
+		'soyoo_meta_catalog_content_id',
+		function( $id, $product ) {
+			if ( ! $product instanceof \WC_Product ) {
+				return $id;
+			}
+			return \SOYOO\MetaCatalog\Feed_Item::get_content_id( $product );
+		},
+		10,
+		2
+	);
 }
 
 /**

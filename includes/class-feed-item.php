@@ -52,10 +52,9 @@ class Feed_Item {
 			return null;
 		}
 
-		// 2. Critical CAPI ID alignment:
-		// Logic strictly matches woo-fb-tracking-server-side:
-		// $id = (string) ( $product->get_sku() ? $product->get_sku() : $product->get_id() );
-		$id = (string) ( $product->get_sku() ? $product->get_sku() : $product->get_id() );
+		// 2. Critical CAPI ID alignment: single source of truth shared with
+		// woo-fb-tracking-server-side through the `soyoo_meta_catalog_content_id` filter.
+		$id = self::get_content_id( $product );
 
 		// 3. Images.
 		$image_id = $product->get_image_id();
@@ -249,6 +248,35 @@ class Feed_Item {
 		$xml .= "\t\t</item>\n";
 
 		return $xml;
+	}
+
+	/**
+	 * Resolve the catalog <g:id> of a product or variation.
+	 *
+	 * SINGLE SOURCE OF TRUTH for Meta IDs: woo-fb-tracking-server-side (v2.1.0+, "auto" mode)
+	 * reads this value through the `soyoo_meta_catalog_content_id` filter for its
+	 * content_ids (Pixel + CAPI). Any change here is automatically followed by the tracking.
+	 *
+	 * - Simple / external products: SKU if defined, otherwise Post ID.
+	 * - Variations: OWN SKU only (`get_sku( 'edit' )`, no inheritance from the parent SKU),
+	 *   otherwise the variation ID. Prevents several variations sharing the parent SKU
+	 *   as <g:id> (duplicates rejected by Meta).
+	 *
+	 * @param \WC_Product $product Product or variation.
+	 * @return string
+	 */
+	public static function get_content_id( \WC_Product $product ): string {
+		$sku = $product->is_type( 'variation' ) ? $product->get_sku( 'edit' ) : $product->get_sku();
+		$id  = ( '' !== (string) $sku ) ? (string) $sku : (string) $product->get_id();
+
+		/**
+		 * Filters the catalog item ID (custom per-site formats).
+		 * Also applied to the tracking content_ids via the inter-plugin contract.
+		 *
+		 * @param string      $id      Resolved <g:id>.
+		 * @param \WC_Product $product Product or variation.
+		 */
+		return (string) apply_filters( 'woo_meta_catalog_item_id', $id, $product );
 	}
 
 	/**

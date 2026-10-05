@@ -383,6 +383,8 @@ class Feed_Admin {
 				</div>
 			</div>
 
+			<?php $this->render_tracking_alignment_box(); ?>
+
 			<!-- STATUS & REGENERATION BAR -->
 			<div class="woo-meta-status-container">
 				<div class="status-grid">
@@ -776,6 +778,100 @@ class Feed_Admin {
 					<li><?php esc_html_e( 'Validez l\'importation : Meta analysera et synchronisera tous vos produits simples et déclinaisons avec les identifiants stricts CAPI.', 'woo-meta-catalog' ); ?></li>
 				</ol>
 			</div>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Render the "Tracking Meta" alignment box.
+	 *
+	 * Compares, on a sample of 5 published products, the content_id sent by
+	 * woo-fb-tracking-server-side (\WFBT\Product_Id::get) with the catalog <g:id>
+	 * (Feed_Item::get_content_id). Same sample query as the tracking plugin box,
+	 * so both screens evaluate the same products.
+	 */
+	private function render_tracking_alignment_box() {
+		$box_style = 'margin: 0 0 20px; padding: 14px 18px; border-radius: 4px; font-size: 13px; line-height: 1.5;';
+
+		if ( ! defined( 'WFBT_VERSION' ) || ! class_exists( '\WFBT\Product_Id' ) ) {
+			?>
+			<div class="woo-meta-tracking-box" style="<?php echo esc_attr( $box_style ); ?> border-left: 4px solid #f59e0b; background: #fffbeb; color: #92400e;">
+				<strong><span class="dashicons dashicons-warning" style="vertical-align: middle; margin-right: 4px; color: #f59e0b;"></span><?php esc_html_e( 'Tracking Meta', 'woo-meta-catalog' ); ?></strong><br />
+				<?php esc_html_e( 'Aucun tracking Meta SOYOO détecté : les événements ViewContent/AddToCart/Purchase ne seront pas reliés au catalogue.', 'woo-meta-catalog' ); ?>
+			</div>
+			<?php
+			return;
+		}
+
+		$sample = wc_get_products(
+			array(
+				'status'  => 'publish',
+				'limit'   => 5,
+				'orderby' => 'date',
+				'order'   => 'DESC',
+				'type'    => array( 'simple', 'variation', 'external' ),
+			)
+		);
+
+		$rows       = array();
+		$mismatches = 0;
+		foreach ( $sample as $product ) {
+			if ( ! $product instanceof \WC_Product ) {
+				continue;
+			}
+			$tracking_id = (string) \WFBT\Product_Id::get( $product );
+			$feed_id     = Feed_Item::get_content_id( $product );
+			$match       = ( $tracking_id === $feed_id );
+			if ( ! $match ) {
+				$mismatches++;
+			}
+			$rows[] = array( $product->get_name(), $tracking_id, $feed_id, $match );
+		}
+
+		$ok        = ( 0 === $mismatches );
+		$effective = (string) \WFBT\Product_Id::get_effective_format();
+		$color     = $ok ? '#008a00' : '#d93025';
+		$bg        = $ok ? '#e7f7ed' : '#fce8e6';
+		?>
+		<div class="woo-meta-tracking-box" style="<?php echo esc_attr( $box_style ); ?> border-left: 4px solid <?php echo esc_attr( $color ); ?>; background: <?php echo esc_attr( $bg ); ?>;">
+			<strong style="color: <?php echo esc_attr( $color ); ?>;">
+				<span class="dashicons <?php echo $ok ? 'dashicons-yes-alt' : 'dashicons-dismiss'; ?>" style="vertical-align: middle; margin-right: 4px;"></span>
+				<?php
+				if ( $ok ) {
+					echo esc_html( sprintf( __( 'Tracking aligné (mode : %s)', 'woo-meta-catalog' ), $effective ) );
+				} else {
+					echo esc_html( sprintf( __( 'Tracking désaligné (mode : %s) : le taux de correspondance catalogue Meta va chuter à 0 %%.', 'woo-meta-catalog' ), $effective ) );
+				}
+				?>
+			</strong>
+			<span style="color: #646970;">
+				<?php echo esc_html( sprintf( __( '(woo-fb-tracking-server-side v%s)', 'woo-meta-catalog' ), WFBT_VERSION ) ); ?>
+			</span>
+			<?php if ( ! $ok ) : ?>
+				<br />
+				<?php esc_html_e( 'Passez le format d\'ID du tracking sur « Automatique » pour déléguer les content_ids au flux :', 'woo-meta-catalog' ); ?>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=wfbt-settings' ) ); ?>"><?php esc_html_e( 'Ouvrir les réglages du tracking Meta', 'woo-meta-catalog' ); ?></a>
+			<?php endif; ?>
+			<?php if ( ! empty( $rows ) ) : ?>
+				<table class="widefat striped" style="margin-top: 10px; font-size: 12px;">
+					<thead><tr>
+						<th><?php esc_html_e( 'Produit', 'woo-meta-catalog' ); ?></th>
+						<th><?php esc_html_e( 'content_id tracking', 'woo-meta-catalog' ); ?></th>
+						<th><?php esc_html_e( 'g:id flux', 'woo-meta-catalog' ); ?></th>
+						<th></th>
+					</tr></thead>
+					<tbody>
+						<?php foreach ( $rows as $row ) : ?>
+							<tr>
+								<td><?php echo esc_html( $row[0] ); ?></td>
+								<td><code><?php echo esc_html( $row[1] ); ?></code></td>
+								<td><code><?php echo esc_html( $row[2] ); ?></code></td>
+								<td style="color: <?php echo $row[3] ? '#008a00' : '#d93025'; ?>;"><?php echo $row[3] ? '✓' : '✗'; ?></td>
+							</tr>
+						<?php endforeach; ?>
+					</tbody>
+				</table>
+			<?php endif; ?>
 		</div>
 		<?php
 	}

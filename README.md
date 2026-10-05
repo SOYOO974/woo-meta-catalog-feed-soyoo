@@ -13,11 +13,10 @@ Déployé en priorité sur des catalogues volumineux (ex: **KidShow.fr** : 2 749
 
 ## 🚀 1. Caractéristiques Principales
 
-- **Alignement CAPI Critique (100% Match Rate)** : L'identifiant XML (`<g:id>`) suit **STRICTEMENT** la même formule que notre extension in-house `woo-fb-tracking-server-side` :
-  ```php
-  $id = (string) ( $product->get_sku() ? $product->get_sku() : $product->get_id() );
-  ```
-  Pour les déclinaisons : l'ID de variation est assigné à `<g:id>`, et l'ID du produit parent est assigné à `<g:item_group_id>`. Cela garantit un taux de réconciliation parfait entre les événements pixel/CAPI (`ViewContent`, `AddToCart`, `Purchase`) et les articles du catalogue Meta.
+- **Alignement CAPI Critique (100% Match Rate) — le flux est la source de vérité unique des ID Meta** : l'identifiant XML (`<g:id>`) est calculé par une seule méthode, `\SOYOO\MetaCatalog\Feed_Item::get_content_id( \WC_Product $product )`, exposée à notre extension in-house `woo-fb-tracking-server-side` (v2.1.0+, mode « auto ») via le filtre `soyoo_meta_catalog_content_id`. Le tracking envoie donc exactement les mêmes `content_ids` que le catalogue, sans logique dupliquée.
+  - Produits simples / externes : SKU si défini, sinon Post ID.
+  - Déclinaisons : SKU **propre** de la variation (`get_sku( 'edit' )`, sans héritage du SKU parent), sinon ID de la variation. L'ID du produit parent est assigné à `<g:item_group_id>`.
+  - Un encadré « Tracking Meta » sur l'écran de réglages compare en direct les ID tracking / flux sur 5 produits publiés.
 - **Filtrage Intelligent du « Stock Mort » (Algorithme Ventes Anti-Saturation)** :
   - Détection automatique via la table WooCommerce Analytics `wc_order_product_lookup` (ou date de création si 0 vente).
   - Élimine chirurgicalement les références épuisées depuis plus de 60 jours, 90 jours, 180 jours, 1 an ou 2 ans sans vente.
@@ -47,7 +46,7 @@ Le flux produit respecte scrupuleusement la spécification **RSS 2.0 avec l'espa
 
 | Balise XML | Description & Logique |
 | :--- | :--- |
-| `<g:id>` | SKU si défini, sinon Post ID WooCommerce (aligné CAPI). |
+| `<g:id>` | `Feed_Item::get_content_id()` : SKU si défini, sinon Post ID ; variations : SKU propre sinon ID de variation. Partagé avec le tracking CAPI. |
 | `<g:title>` | Titre nettoyé du produit (ou Titre Parent + Attributs pour les variations). |
 | `<g:description>` | Extrait court (ou description longue tronquée à 5 000 car.), balises HTML nettoyées. |
 | `<g:link>` | URL canonique HTTPS avec balisage UTM paramétrable (`utm_source=facebook&utm_medium=catalog`). |
@@ -121,6 +120,31 @@ add_action( 'woo_meta_catalog_feed_generated', function( $file_path, $total_item
     }
 }, 10, 3 );
 ```
+
+### Filtre : `woo_meta_catalog_item_id`
+Personnalise le `<g:id>` (format sur-mesure par site). Appliqué dans `Feed_Item::get_content_id()`, il est donc **automatiquement répercuté sur le tracking** via le contrat inter-extensions :
+
+```php
+add_filter( 'woo_meta_catalog_item_id', function( $id, $product ) {
+    return 'KS-' . $id;
+}, 10, 2 );
+```
+
+### Filtre exposé : `soyoo_meta_catalog_content_id` (contrat inter-extensions)
+Consommé par `woo-fb-tracking-server-side` v2.1.0+ (mode « auto ») : `apply_filters( 'soyoo_meta_catalog_content_id', null, $product )` renvoie le `<g:id>` exact écrit dans le XML. Ne pas le surcharger : utiliser `woo_meta_catalog_item_id`.
+
+---
+
+## 📝 Changelog
+
+### 1.3.0
+- Le flux devient la source de vérité unique des ID Meta : nouvelle méthode `Feed_Item::get_content_id()` + filtre exposé `soyoo_meta_catalog_content_id` (consommé par `woo-fb-tracking-server-side` v2.1.0+).
+- Nouveau filtre `woo_meta_catalog_item_id` pour les formats d'ID sur-mesure.
+- Correctif doublons : une variation sans SKU propre n'hérite plus du SKU parent, elle sort avec son ID de variation.
+- Encadré « Tracking Meta » sur l'écran de réglages : comparaison en direct tracking / flux sur 5 produits.
+
+> [!WARNING]
+> Les variations sans SKU propre dont le parent a un SKU changent de `<g:id>` (SKU parent → ID variation). Meta recrée ces articles au prochain import ; le tracking suit automatiquement en mode « auto ».
 
 ---
 
