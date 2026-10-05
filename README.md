@@ -52,9 +52,9 @@ Le flux produit respecte scrupuleusement la spécification **RSS 2.0 avec l'espa
 | `<g:link>` | URL canonique HTTPS avec balisage UTM paramétrable (`utm_source=facebook&utm_medium=catalog`). |
 | `<g:image_link>` | URL absolue HTTPS de l'image principale (avec repli sur l'image parent si variation sans visuel). |
 | `<g:additional_image_link>` | Jusqu'à 5 images additionnelles issues de la galerie produit. |
-| `<g:availability>` | `in stock` ou `out of stock` selon l'état réel des stocks WooCommerce. |
-| `<g:price>` | Prix régulier formaté avec le code devise ISO (ex: `19.90 EUR`). |
-| `<g:sale_price>` | Prix remisé si une promotion est active sur le produit. |
+| `<g:price>` | Prix régulier d'origine formaté avec devise ISO (ex: `100.00 EUR`), calculé via `wc_get_price_to_display()` (conformité TTC/HT alignée avec `woo-fb-tracking-server-side`). |
+| `<g:sale_price>` | Prix remisé si promotion active (supporte soldes WooCommerce et réductions dynamiques). Déclenche automatiquement le **prix barré** sur Meta Ads et Instagram Shop. |
+| `<g:sale_price_effective_date>` | Intervalle de validité ISO 8601 (`YYYY-MM-DDTHH:MM+TZ/YYYY-MM-DDTHH:MM+TZ`) si des dates de promotion sont programmées dans WooCommerce. |
 | `<g:condition>` | `new`. |
 | `<g:brand>` | Marque issue de l'attribut produit configuré (`pa_marque`, `pa_brand`), ou nom du site en repli. |
 | `<g:item_group_id>` | Présent uniquement sur les variations, contenant l'identifiant du produit parent. |

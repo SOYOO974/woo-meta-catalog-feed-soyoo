@@ -120,29 +120,11 @@ class Feed_Item {
 			}
 		}
 
-		// 7. Prices & Currency.
-		$currency      = get_woocommerce_currency();
-		$regular_price = $product->get_regular_price();
-		$sale_price    = $product->get_sale_price();
-
-		// If regular price is missing, fallback to current price.
-		if ( '' === $regular_price || null === $regular_price ) {
-			$regular_price = $product->get_price();
-		}
-
-		if ( '' === $regular_price || null === $regular_price ) {
-			$regular_price = 0;
-		}
-
-		$formatted_price = number_format( (float) $regular_price, 2, '.', '' ) . ' ' . $currency;
-
-		$formatted_sale_price = null;
-		if ( $product->is_on_sale() && '' !== $sale_price && null !== $sale_price ) {
-			$sale_val = (float) $sale_price;
-			if ( $sale_val < (float) $regular_price ) {
-				$formatted_sale_price = number_format( $sale_val, 2, '.', '' ) . ' ' . $currency;
-			}
-		}
+		// 7. Prices & Currency (TTC-compliant, dynamic sales fallback & schedule dates).
+		$prices                    = self::get_prices( $product, $parent );
+		$formatted_price           = $prices['formatted_regular_price'];
+		$formatted_sale_price      = $prices['formatted_sale_price'];
+		$sale_price_effective_date = $prices['sale_price_effective_date'];
 
 		// 8. Brand determination.
 		$brand = '';
@@ -213,6 +195,10 @@ class Feed_Item {
 
 		if ( ! empty( $formatted_sale_price ) ) {
 			$xml .= "\t\t\t<g:sale_price>" . self::escape_xml( $formatted_sale_price ) . "</g:sale_price>\n";
+
+			if ( ! empty( $sale_price_effective_date ) ) {
+				$xml .= "\t\t\t<g:sale_price_effective_date>" . self::escape_xml( $sale_price_effective_date ) . "</g:sale_price_effective_date>\n";
+			}
 		}
 
 		$xml .= "\t\t\t<g:condition>new</g:condition>\n";
@@ -277,6 +263,100 @@ class Feed_Item {
 		 * @param \WC_Product $product Product or variation.
 		 */
 		return (string) apply_filters( 'woo_meta_catalog_item_id', $id, $product );
+	}
+
+	/**
+	 * Calculate regular and promotional prices for a product or variation.
+	 *
+	 * Ensures strict compliance with store tax display settings (TTC / HT)
+	 * via `wc_get_price_to_display()`, matching `woo-fb-tracking-server-side`
+	 * CAPI value calculation, and provides dynamic sale price fallback and
+	 * ISO 8601 promotion schedule dates (<g:sale_price_effective_date>).
+	 *
+	 * @param \WC_Product      $product Current product or variation.
+	 * @param \WC_Product|null $parent  Parent product if variation.
+	 * @return array Price data array:
+	 *               - 'currency': ISO currency code.
+	 *               - 'regular_price': (float) regular price displayed.
+	 *               - 'sale_price': (float|null) sale price displayed if on sale.
+	 *               - 'formatted_regular_price': string formatted with currency.
+	 *               - 'formatted_sale_price': string|null formatted with currency.
+	 *               - 'sale_price_effective_date': string|null ISO 8601 interval.
+	 */
+	public static function get_prices( \WC_Product $product, $parent = null ): array {
+		$currency = function_exists( 'get_woocommerce_currency' ) ? get_woocommerce_currency() : 'EUR';
+		$raw_reg  = $product->get_regular_price();
+
+		if ( '' === $raw_reg || null === $raw_reg ) {
+			$raw_reg = $product->get_price();
+		}
+		if ( '' === $raw_reg || null === $raw_reg ) {
+			$raw_reg = 0;
+		}
+
+		$regular_price = function_exists( 'wc_get_price_to_display' )
+			? (float) wc_get_price_to_display( $product, array( 'price' => $raw_reg ) )
+			: (float) $raw_reg;
+
+		$sale_price                = null;
+		$formatted_sale_price      = null;
+		$sale_price_effective_date = null;
+
+		if ( $product->is_on_sale() ) {
+			$raw_sale = $product->get_sale_price();
+			// Dynamic pricing fallback: if get_sale_price() is empty, fallback to current effective price.
+			if ( '' === $raw_sale || null === $raw_sale ) {
+				$raw_sale = $product->get_price();
+			}
+
+			if ( '' !== $raw_sale && null !== $raw_sale ) {
+				$calc_sale = function_exists( 'wc_get_price_to_display' )
+					? (float) wc_get_price_to_display( $product, array( 'price' => $raw_sale ) )
+					: (float) $raw_sale;
+
+				// Sale price must be strictly lower than regular price to be valid in Meta / Google.
+				if ( $calc_sale > 0 && $calc_sale < $regular_price ) {
+					$sale_price           = $calc_sale;
+					$formatted_sale_price = number_format( $sale_price, 2, '.', '' ) . ' ' . $currency;
+
+					// Check for scheduled promotion dates (WC_DateTime).
+					$date_from = $product->get_date_on_sale_from();
+					$date_to   = $product->get_date_on_sale_to();
+
+					// Fallback to parent dates if variation has no specific schedule dates.
+					if ( ! $date_from && $parent && is_a( $parent, '\WC_Product' ) ) {
+						$date_from = $parent->get_date_on_sale_from();
+					}
+					if ( ! $date_to && $parent && is_a( $parent, '\WC_Product' ) ) {
+						$date_to = $parent->get_date_on_sale_to();
+					}
+
+					if ( $date_from && $date_to && method_exists( $date_from, 'format' ) && method_exists( $date_to, 'format' ) ) {
+						$sale_price_effective_date = $date_from->format( 'c' ) . '/' . $date_to->format( 'c' );
+					}
+				}
+			}
+		}
+
+		$formatted_regular_price = number_format( $regular_price, 2, '.', '' ) . ' ' . $currency;
+
+		$prices = array(
+			'currency'                  => $currency,
+			'regular_price'             => $regular_price,
+			'sale_price'                => $sale_price,
+			'formatted_regular_price'   => $formatted_regular_price,
+			'formatted_sale_price'      => $formatted_sale_price,
+			'sale_price_effective_date' => $sale_price_effective_date,
+		);
+
+		/**
+		 * Filters the calculated prices for a product in the catalog feed.
+		 *
+		 * @param array            $prices  Calculated price data.
+		 * @param \WC_Product      $product Current product or variation.
+		 * @param \WC_Product|null $parent  Parent product if variation.
+		 */
+		return (array) apply_filters( 'woo_meta_catalog_product_prices', $prices, $product, $parent );
 	}
 
 	/**
