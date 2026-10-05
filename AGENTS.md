@@ -77,3 +77,19 @@ Dès qu'une modification, correction de bug ou amélioration est apportée à ce
 - **Filtre de personnalisation** : `woo_meta_catalog_item_id( $id, $product )`, appliqué DANS `get_content_id()` → le flux ET le tracking suivent.
 - **Garde-fou visuel** : encadré « Tracking Meta » dans `Feed_Admin::render_tracking_alignment_box()` (compare `\WFBT\Product_Id::get()` et `get_content_id()` sur 5 produits, même échantillon que l'encadré côté tracking). Le pendant côté tracking : `WooCommerce > wfbt-settings`.
 - **Toute modification de la logique d'ID** = changement cassant pour Meta (articles recréés, historique d'apprentissage perdu) : bump de version mineure minimum, mention explicite dans le changelog et la release GitHub, et vérification que les deux encadrés restent verts.
+
+### ⚠️ Points de Vigilance Opérationnels & Recette
+
+1. **Impact sur les Variations sans SKU Propre** :
+   - Depuis v1.3.0, une variation sans SKU propre n'hérite plus du SKU de son parent et prend désormais son propre ID de variation (`get_sku( 'edit' ) ? get_sku( 'edit' ) : get_id()`).
+   - *Conséquence Meta Ads* : Lors de l'import suivant du flux dans Meta Commerce Manager, ces variations sont considérées comme de nouveaux articles (`<g:id>` modifié). L'ancien article passe en rupture / non référencé et Meta réapprend la performance de la variation. Aucun impact sur les boutiques sans aucun SKU (ex: KidShow.fr où tout est géré par Post ID).
+2. **Ordre de Déploiement Strict** :
+   - Déployer `woo-fb-tracking-server-side` (v2.1.0+ en mode « auto ») **avant ou simultanément** à `woo-meta-catalog-feed-soyoo` (v1.3.0+). Si le flux est mis à jour en v1.3.0 alors qu'une version ancienne du tracking est encore active, le tracking continuera de transmettre le SKU parent sur ces variations, provoquant un désalignement temporaire (détecté en rouge dans l'encadré admin).
+3. **Cas Limite : Collision SKU Numérique & Post ID** :
+   - Si un produit possède un SKU purement numérique identique au Post ID d'un autre produit du catalogue, une collision de `<g:id>` reste possible.
+4. **Commande PowerShell d'Audit Rapide Anti-Doublons** :
+   - Pour vérifier l'absence totale de doublons `<g:id>` sur un fichier XML généré :
+     ```powershell
+     ([xml](Get-Content meta-catalog.xml -Raw -Encoding UTF8)).rss.channel.item | Group-Object { $_.id } | Where-Object Count -gt 1 | Select-Object Name, Count
+     ```
+
