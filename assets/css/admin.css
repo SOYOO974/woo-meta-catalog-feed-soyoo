@@ -471,3 +471,23 @@ body.woocommerce_page_woo-meta-catalog-feed .notice.woo-meta-allowed-notice {
 	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
+/* Image CDN Settings & Guide */
+.woo-meta-catalog-wrap .cdn-guide-box a {
+	color: #2563eb;
+	text-decoration: underline;
+}
+
+.woo-meta-catalog-wrap .cdn-guide-box code {
+	background: #e2e8f0;
+	color: #1e293b;
+	padding: 2px 6px;
+	border-radius: 4px;
+	font-size: 12px;
+}
+
+.woo-meta-catalog-wrap #btn-test-cdn.loading {
+	opacity: 0.7;
+	pointer-events: none;
+}
+
+

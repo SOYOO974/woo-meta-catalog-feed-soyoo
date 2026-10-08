@@ -30,6 +30,7 @@ class Feed_Admin {
 		add_action( 'wp_ajax_woo_meta_catalog_trigger_generation', array( $this, 'ajax_trigger_generation' ) );
 		add_action( 'wp_ajax_woo_meta_catalog_check_status', array( $this, 'ajax_check_status' ) );
 		add_action( 'wp_ajax_woo_meta_catalog_reset_lock', array( $this, 'ajax_reset_lock' ) );
+		add_action( 'wp_ajax_woo_meta_catalog_test_cdn', array( $this, 'ajax_test_cdn' ) );
 		add_action( 'admin_init', array( $this, 'save_settings' ) );
 	}
 
@@ -234,6 +235,115 @@ class Feed_Admin {
 	}
 
 	/**
+	 * Handle AJAX test CDN connection.
+	 */
+	public function ajax_test_cdn() {
+		check_ajax_referer( 'woo_meta_catalog_admin_nonce', 'security' );
+
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Droits insuffisants.', 'woo-meta-catalog' ) ) );
+		}
+
+		$endpoint    = isset( $_POST['endpoint'] ) ? esc_url_raw( trim( wp_unslash( $_POST['endpoint'] ) ) ) : '';
+		$provider    = isset( $_POST['provider'] ) ? sanitize_text_field( wp_unslash( $_POST['provider'] ) ) : 'imagekit';
+		$auto_square = ! empty( $_POST['auto_square'] ) ? 1 : 0;
+		$force_jpeg  = ! empty( $_POST['force_jpeg'] ) ? 1 : 0;
+
+		if ( empty( $endpoint ) ) {
+			wp_send_json_error( array( 'message' => __( 'Veuillez saisir une URL Endpoint CDN.', 'woo-meta-catalog' ) ) );
+		}
+
+		// Find a sample product with an image.
+		$sample_image_url = '';
+		$sample_title     = '';
+
+		$query_args = array(
+			'post_type'      => 'product',
+			'post_status'    => 'publish',
+			'posts_per_page' => 1,
+			'meta_query'     => array(
+				array(
+					'key'     => '_thumbnail_id',
+					'value'   => 0,
+					'compare' => '>',
+				),
+			),
+		);
+		$products = get_posts( $query_args );
+
+		if ( ! empty( $products ) ) {
+			$product          = wc_get_product( $products[0]->ID );
+			$sample_title     = $product ? $product->get_name() : '';
+			$thumb_id         = $product ? $product->get_image_id() : 0;
+			$sample_image_url = $thumb_id ? wp_get_attachment_image_url( $thumb_id, 'full' ) : '';
+		}
+
+		// Fallback: check any attachment in media library.
+		if ( empty( $sample_image_url ) ) {
+			$attachments = get_posts( array(
+				'post_type'      => 'attachment',
+				'post_mime_type' => 'image',
+				'posts_per_page' => 1,
+				'post_status'    => 'inherit',
+			) );
+			if ( ! empty( $attachments ) ) {
+				$sample_image_url = wp_get_attachment_image_url( $attachments[0]->ID, 'full' );
+				$sample_title     = $attachments[0]->post_title;
+			}
+		}
+
+		if ( empty( $sample_image_url ) ) {
+			wp_send_json_error( array( 'message' => __( 'Aucune image produit trouvée dans la médiathèque pour effectuer le test.', 'woo-meta-catalog' ) ) );
+		}
+
+		// Format test URL.
+		$test_options = array(
+			'enable_image_cdn'      => 1,
+			'image_cdn_provider'    => $provider,
+			'image_cdn_endpoint'    => $endpoint,
+			'image_cdn_auto_square' => $auto_square,
+			'image_cdn_force_jpeg'  => $force_jpeg,
+		);
+		$cdn_test_url = Feed_Item::format_image_url( $sample_image_url, $test_options );
+
+		// Perform live HTTP GET test request using Meta\'s crawler User-Agent.
+		$start_time = microtime( true );
+		$response   = wp_remote_get( $cdn_test_url, array(
+			'timeout'    => 12,
+			'user-agent' => 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
+			'sslverify'  => true,
+		) );
+		$duration_ms = round( ( microtime( true ) - $start_time ) * 1000 );
+
+		if ( is_wp_error( $response ) ) {
+			wp_send_json_error( array(
+				'message' => sprintf( __( 'Échec de connexion réseau au CDN : %s', 'woo-meta-catalog' ), $response->get_error_message() ),
+				'url'     => $cdn_test_url,
+			) );
+		}
+
+		$status_code  = wp_remote_retrieve_response_code( $response );
+		$content_type = wp_remote_retrieve_header( $response, 'content-type' );
+
+		if ( 200 === $status_code ) {
+			wp_send_json_success( array(
+				'message'      => sprintf( __( 'Connexion CDN réussie ! (HTTP 200 en %d ms)', 'woo-meta-catalog' ), $duration_ms ),
+				'cdn_url'      => $cdn_test_url,
+				'original_url' => $sample_image_url,
+				'content_type' => $content_type,
+				'product_name' => $sample_title,
+				'duration_ms'  => $duration_ms,
+			) );
+		} else {
+			wp_send_json_error( array(
+				'message'     => sprintf( __( 'Le CDN a retourné un code HTTP %d. Vérifiez que votre Origine Web Folder dans ImageKit pointe bien vers « %s »', 'woo-meta-catalog' ), $status_code, home_url() ),
+				'cdn_url'     => $cdn_test_url,
+				'status_code' => $status_code,
+			) );
+		}
+	}
+
+	/**
 	 * Save plugin settings.
 	 */
 	public function save_settings() {
@@ -253,6 +363,11 @@ class Feed_Admin {
 			'exclude_out_of_stock'    => isset( $_POST['exclude_out_of_stock'] ) ? 1 : 0,
 			'exclude_no_image'        => isset( $_POST['exclude_no_image'] ) ? 1 : 0,
 			'image_version'           => sanitize_text_field( wp_unslash( $_POST['image_version'] ?? '' ) ),
+			'enable_image_cdn'        => isset( $_POST['enable_image_cdn'] ) ? 1 : 0,
+			'image_cdn_provider'      => sanitize_text_field( wp_unslash( $_POST['image_cdn_provider'] ?? 'imagekit' ) ),
+			'image_cdn_endpoint'      => esc_url_raw( trim( wp_unslash( $_POST['image_cdn_endpoint'] ?? '' ) ) ),
+			'image_cdn_auto_square'   => isset( $_POST['image_cdn_auto_square'] ) ? 1 : 0,
+			'image_cdn_force_jpeg'    => isset( $_POST['image_cdn_force_jpeg'] ) ? 1 : 0,
 			'default_brand'           => sanitize_text_field( wp_unslash( $_POST['default_brand'] ?? '' ) ),
 			'brand_attribute'         => sanitize_text_field( wp_unslash( $_POST['brand_attribute'] ?? '' ) ),
 			'enable_utms'             => isset( $_POST['enable_utms'] ) ? 1 : 0,
@@ -570,6 +685,82 @@ class Feed_Admin {
 									</div>
 									<p class="description">
 										<?php esc_html_e( 'Ajoute un paramètre ?v=... aux URLs des images (<g:image_link> et <g:additional_image_link>). Permet d\'invalider immédiatement le cache de Meta Commerce Manager pour forcer le retéléchargement complet des visuels.', 'woo-meta-catalog' ); ?>
+									</p>
+								</td>
+							</tr>
+
+							<!-- IMAGE CDN OFFLOADING & AUTO-SQUARE -->
+							<tr class="woo-meta-section-header">
+								<th colspan="2" style="padding: 24px 0 10px 0; border-top: 1px solid #e2e8f0;">
+									<h3 style="margin: 0; font-size: 15px; color: #1e293b; display: flex; align-items: center; gap: 8px;">
+										<span class="dashicons dashicons-cloud" style="color: #2563eb; font-size: 20px; width: 20px; height: 20px;"></span>
+										<?php esc_html_e( 'Déportation CDN & Normalisation des Images (ImageKit / Cloudflare)', 'woo-meta-catalog' ); ?>
+										<span style="font-size: 11px; background: #dbeafe; color: #1e40af; padding: 2px 8px; border-radius: 9999px; font-weight: 600;">NOUVEAU v1.5.0</span>
+									</h3>
+									<p class="description" style="margin-top: 4px; font-weight: normal; color: #64748b;">
+										<?php esc_html_e( 'Résout définitivement le blocage des vignettes (carrés gris) dans Meta Commerce Manager en servant les photos depuis un réseau CDN haute performance, sans surcharger votre serveur WordPress.', 'woo-meta-catalog' ); ?>
+									</p>
+								</th>
+							</tr>
+
+							<tr>
+								<th scope="row"><?php esc_html_e( 'Activer le CDN d\'images', 'woo-meta-catalog' ); ?></th>
+								<td>
+									<label for="enable_image_cdn">
+										<input name="enable_image_cdn" type="checkbox" id="enable_image_cdn" value="1" <?php checked( ! empty( $options['enable_image_cdn'] ) ); ?> />
+										<strong><?php esc_html_e( 'Distribuer les images du catalogue via un CDN tiers (Origin Pull)', 'woo-meta-catalog' ); ?></strong>
+									</label>
+									<p class="description">
+										<?php esc_html_e( 'Le CDN récupère l\'image sur votre boutique une seule fois à la volée et absorbe la rafale de requêtes simultanées du robot Meta sans déclencher de blocage de sécurité (WAF/Rate-Limiting) sur votre hébergement.', 'woo-meta-catalog' ); ?>
+									</p>
+								</td>
+							</tr>
+
+							<tr class="row-cdn-field">
+								<th scope="row"><label for="image_cdn_provider"><?php esc_html_e( 'Fournisseur CDN', 'woo-meta-catalog' ); ?></label></th>
+								<td>
+									<select name="image_cdn_provider" id="image_cdn_provider">
+										<option value="imagekit" <?php selected( $options['image_cdn_provider'] ?? 'imagekit', 'imagekit' ); ?>><?php esc_html_e( 'ImageKit.io (Recommandé - 20 Go/mois gratuits, sans CB)', 'woo-meta-catalog' ); ?></option>
+										<option value="custom" <?php selected( $options['image_cdn_provider'] ?? '', 'custom' ); ?>><?php esc_html_e( 'Personnalisé / Autre CDN (Cloudflare Worker, BunnyCDN, CDN CNAME...)', 'woo-meta-catalog' ); ?></option>
+									</select>
+								</td>
+							</tr>
+
+							<tr class="row-cdn-field">
+								<th scope="row"><label for="image_cdn_endpoint"><?php esc_html_e( 'URL Endpoint CDN', 'woo-meta-catalog' ); ?></label></th>
+								<td>
+									<div style="display: flex; gap: 8px; align-items: center; max-width: 600px;">
+										<input name="image_cdn_endpoint" type="url" id="image_cdn_endpoint" value="<?php echo esc_attr( $options['image_cdn_endpoint'] ?? '' ); ?>" class="large-text" placeholder="https://ik.imagekit.io/votre_identifiant" />
+										<button type="button" class="button button-secondary" id="btn-test-cdn">
+											<span class="dashicons dashicons-admin-links" style="vertical-align: text-top;"></span>
+											<?php esc_html_e( 'Tester le CDN', 'woo-meta-catalog' ); ?>
+										</button>
+									</div>
+									<div id="cdn-test-result" style="margin-top: 8px; display: none;"></div>
+									<div class="cdn-guide-box" style="margin-top: 12px; padding: 12px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; line-height: 1.5; color: #475569; max-width: 640px;">
+										<strong style="color: #0f172a;"><?php esc_html_e( 'Configuration rapide ImageKit.io en 3 étapes (Gratuit) :', 'woo-meta-catalog' ); ?></strong>
+										<ol style="margin: 6px 0 0 18px; padding: 0;">
+											<li><?php printf( __( 'Créez un compte gratuit sur <a href="%s" target="_blank" rel="noopener">imagekit.io</a> avec l\'email du client (aucun moyen de paiement requis).', 'woo-meta-catalog' ), 'https://imagekit.io/registration' ); ?></li>
+											<li><?php printf( __( 'Dans <em>External Storage > Origins > Add New</em>, choisissez <strong>Web Folder</strong> et entrez comme Base URL : <code>%s</code>', 'woo-meta-catalog' ), esc_html( home_url() ) ); ?></li>
+											<li><?php esc_html_e( 'Copiez votre <strong>URL-endpoint</strong> (ex: <code>https://ik.imagekit.io/client974</code>) et collez-la dans le champ ci-dessus.', 'woo-meta-catalog' ); ?></li>
+										</ol>
+									</div>
+								</td>
+							</tr>
+
+							<tr class="row-cdn-field">
+								<th scope="row"><?php esc_html_e( 'Optimisation Meta Ads', 'woo-meta-catalog' ); ?></th>
+								<td>
+									<label for="image_cdn_auto_square" style="display: block; margin-bottom: 6px;">
+										<input name="image_cdn_auto_square" type="checkbox" id="image_cdn_auto_square" value="1" <?php checked( ! isset( $options['image_cdn_auto_square'] ) || ! empty( $options['image_cdn_auto_square'] ) ); ?> />
+										<?php esc_html_e( 'Normalisation automatique au format Carré 1:1 (1024×1024 px) avec marges blanches (ImageKit)', 'woo-meta-catalog' ); ?>
+									</label>
+									<label for="image_cdn_force_jpeg" style="display: block;">
+										<input name="image_cdn_force_jpeg" type="checkbox" id="image_cdn_force_jpeg" value="1" <?php checked( ! isset( $options['image_cdn_force_jpeg'] ) || ! empty( $options['image_cdn_force_jpeg'] ) ); ?> />
+										<?php esc_html_e( 'Forcer la délivrabilité en JPEG standard (f-jpg) pour compatibilité 100% avec les crawlers Meta', 'woo-meta-catalog' ); ?>
+									</label>
+									<p class="description" style="margin-top: 6px;">
+										<?php esc_html_e( 'Élimine les rejets de ratio d\'aspect ou d\'encodage en convertissant à la volée toutes les photos rectangulaires en visuels carrés avec bandes blanches élégantes.', 'woo-meta-catalog' ); ?>
 									</p>
 								</td>
 							</tr>

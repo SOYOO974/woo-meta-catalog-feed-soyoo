@@ -246,6 +246,79 @@
 			alert('Nouvelle version d\'image générée (' + timestamp + '). Enregistrez les réglages puis régénérez le flux pour forcer Meta à retélécharger toutes les photos.');
 		});
 
+		// 6. Image CDN Options Toggle
+		function toggleCdnFields() {
+			if ($('#enable_image_cdn').is(':checked')) {
+				$('.row-cdn-field').show();
+			} else {
+				$('.row-cdn-field').hide();
+			}
+		}
+		$('#enable_image_cdn').on('change', toggleCdnFields);
+		toggleCdnFields();
+
+		// 7. Test CDN Connection
+		$('#btn-test-cdn').on('click', function(e) {
+			e.preventDefault();
+			var $btn        = $(this);
+			var endpoint    = $('#image_cdn_endpoint').val().trim();
+			var provider    = $('#image_cdn_provider').val();
+			var autoSquare  = $('#image_cdn_auto_square').is(':checked') ? 1 : 0;
+			var forceJpeg   = $('#image_cdn_force_jpeg').is(':checked') ? 1 : 0;
+			var $res        = $('#cdn-test-result');
+
+			if (!endpoint) {
+				alert('Veuillez saisir une URL Endpoint CDN avant de tester.');
+				$('#image_cdn_endpoint').focus();
+				return;
+			}
+
+			$btn.prop('disabled', true).addClass('loading');
+			$res.show().html('<span class="spinner is-active" style="float:none; margin: 0 6px 0 0;"></span> Test de téléchargement CDN via le User-Agent de Meta...');
+
+			$.ajax({
+				url: wooMetaCatalogVars.ajaxUrl,
+				type: 'POST',
+				dataType: 'json',
+				data: {
+					action: 'woo_meta_catalog_test_cdn',
+					security: wooMetaCatalogVars.nonce,
+					endpoint: endpoint,
+					provider: provider,
+					auto_square: autoSquare,
+					force_jpeg: forceJpeg
+				},
+				success: function(response) {
+					$btn.prop('disabled', false).removeClass('loading');
+					if (response.success && response.data) {
+						var d = response.data;
+						var html = '<div class="notice notice-success inline" style="margin: 6px 0; padding: 10px 14px; border-left: 4px solid #10b981; background: #ecfdf5; border-radius: 4px;">';
+						html += '<p style="margin: 0; color: #065f46; font-size: 13px;"><strong><span class="dashicons dashicons-yes" style="vertical-align: middle; color: #10b981;"></span> ' + d.message + '</strong></p>';
+						if (d.cdn_url) {
+							html += '<div style="margin-top: 8px; display: flex; align-items: center; gap: 12px;">';
+							html += '<img src="' + d.cdn_url + '" alt="Aperçu CDN" style="width: 70px; height: 70px; object-fit: contain; border: 1px solid #d1fae5; background: #fff; border-radius: 4px;" />';
+							html += '<div style="font-size: 12px; color: #047857; word-break: break-all;">';
+							html += '<div><strong>Produit testé :</strong> ' + (d.product_name || 'Échantillon') + '</div>';
+							html += '<div><strong>URL CDN :</strong> <a href="' + d.cdn_url + '" target="_blank" style="color: #059669; text-decoration: underline;">' + d.cdn_url + '</a></div>';
+							html += '</div></div>';
+						}
+						html += '</div>';
+						$res.html(html);
+					} else {
+						var msg = (response.data && response.data.message) ? response.data.message : 'Erreur inconnue lors du test.';
+						var html = '<div class="notice notice-error inline" style="margin: 6px 0; padding: 10px 14px; border-left: 4px solid #ef4444; background: #fef2f2; border-radius: 4px;">';
+						html += '<p style="margin: 0; color: #991b1b; font-size: 13px;"><strong><span class="dashicons dashicons-warning" style="vertical-align: middle; color: #ef4444;"></span> ' + msg + '</strong></p>';
+						html += '</div>';
+						$res.html(html);
+					}
+				},
+				error: function() {
+					$btn.prop('disabled', false).removeClass('loading');
+					$res.html('<div class="notice notice-error inline" style="margin: 6px 0; padding: 10px 14px; border-left: 4px solid #ef4444; background: #fef2f2; border-radius: 4px;"><p style="margin: 0; color: #991b1b; font-size: 13px;">Erreur de communication AJAX avec le serveur.</p></div>');
+				}
+			});
+		});
+
 		function stopLoading($btn) {
 			$btn.removeClass('loading').prop('disabled', false);
 		}

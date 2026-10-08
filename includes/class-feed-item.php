@@ -68,10 +68,7 @@ class Feed_Item {
 		}
 
 		if ( ! empty( $image_url ) ) {
-			$image_url = set_url_scheme( $image_url, 'https' );
-			if ( ! empty( $options['image_version'] ) ) {
-				$image_url = add_query_arg( 'v', rawurlencode( (string) $options['image_version'] ), $image_url );
-			}
+			$image_url = self::format_image_url( $image_url, $options );
 		}
 
 		/**
@@ -180,11 +177,7 @@ class Feed_Item {
 				}
 				$gal_url = wp_get_attachment_image_url( $gal_id, 'full' );
 				if ( $gal_url ) {
-					$full_gal_url = set_url_scheme( $gal_url, 'https' );
-					if ( ! empty( $options['image_version'] ) ) {
-						$full_gal_url = add_query_arg( 'v', rawurlencode( (string) $options['image_version'] ), $full_gal_url );
-					}
-					$additional_images[] = $full_gal_url;
+					$additional_images[] = self::format_image_url( $gal_url, $options );
 					$count++;
 					if ( $count >= 5 ) {
 						break;
@@ -867,6 +860,69 @@ class Feed_Item {
 		}
 
 		return "['" . implode( "','", $clean_labels ) . "']";
+	}
+
+	/**
+	 * Format and optionally offload an image URL to a CDN (e.g. ImageKit.io or Custom Pull CDN).
+	 * Supports auto-squaring 1:1 padding, JPEG normalization, and cache busting.
+	 *
+	 * @param string $image_url Raw image URL from WordPress.
+	 * @param array  $options   Plugin settings.
+	 * @return string Formatted/CDN-offloaded image URL.
+	 */
+	public static function format_image_url( $image_url, $options = array() ) {
+		if ( empty( $image_url ) ) {
+			return '';
+		}
+
+		$image_url = set_url_scheme( $image_url, 'https' );
+
+		// 1. Check if CDN Offloading is enabled.
+		$is_cdn_enabled = ! empty( $options['enable_image_cdn'] ) && ! empty( $options['image_cdn_endpoint'] );
+		$provider       = ! empty( $options['image_cdn_provider'] ) ? $options['image_cdn_provider'] : 'imagekit';
+		$cdn_endpoint   = $is_cdn_enabled ? untrailingslashit( trim( $options['image_cdn_endpoint'] ) ) : '';
+
+		if ( $is_cdn_enabled && ! empty( $cdn_endpoint ) ) {
+			if ( 0 !== strpos( $cdn_endpoint, 'http://' ) && 0 !== strpos( $cdn_endpoint, 'https://' ) ) {
+				$cdn_endpoint = 'https://' . $cdn_endpoint;
+			}
+			$cdn_endpoint = set_url_scheme( $cdn_endpoint, 'https' );
+
+			// Extract site base URL.
+			$site_url = untrailingslashit( set_url_scheme( home_url(), 'https' ) );
+
+			// Replace WordPress origin domain with CDN endpoint.
+			if ( 0 === strpos( $image_url, $site_url ) ) {
+				$image_url = $cdn_endpoint . substr( $image_url, strlen( $site_url ) );
+			}
+
+			// Provider-specific transformations (ImageKit.io).
+			if ( 'imagekit' === $provider ) {
+				$tr_parts = array();
+
+				if ( ! empty( $options['image_cdn_auto_square'] ) ) {
+					$tr_parts[] = 'w-1024';
+					$tr_parts[] = 'h-1024';
+					$tr_parts[] = 'cm-pad_resize';
+					$tr_parts[] = 'bg-FFFFFF';
+				}
+
+				if ( ! empty( $options['image_cdn_force_jpeg'] ) ) {
+					$tr_parts[] = 'f-jpg';
+				}
+
+				if ( ! empty( $tr_parts ) ) {
+					$image_url = add_query_arg( 'tr', implode( ',', $tr_parts ), $image_url );
+				}
+			}
+		}
+
+		// 2. Cache busting version parameter (?v=...).
+		if ( ! empty( $options['image_version'] ) ) {
+			$image_url = add_query_arg( 'v', rawurlencode( (string) $options['image_version'] ), $image_url );
+		}
+
+		return $image_url;
 	}
 
 	/**
