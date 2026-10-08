@@ -93,3 +93,21 @@ Dès qu'une modification, correction de bug ou amélioration est apportée à ce
      ([xml](Get-Content meta-catalog.xml -Raw -Encoding UTF8)).rss.channel.item | Group-Object { $_.id } | Where-Object Count -gt 1 | Select-Object Name, Count
      ```
 
+---
+
+## 🖼️ DIAGNOSTIC DES IMAGES CATALOGUE META & RATE-LIMITING (Audit Octobre 2026)
+
+### 1. Faux-amis & Mythes déconstruits par l'audit empirique
+- **Faux-ami WebP** : Meta Commerce Manager gère et affiche parfaitement les images au format `.webp` dans les catalogues produits récents (validé sur Comptoir de Cambaie : des références en `.webp` comme `100201`, `110021`, `110019`, `110060`, `219996` sont affichées à 100 % dans le catalogue Meta).
+- **Vulnérabilité multi-formats** : Le blocage touche indistinctement le PNG, le JPEG et le WebP (`100012` en PNG, `100200` en JPEG 600x600, `100205` en JPEG 500x500 sont tous bloqués avec le carré gris placeholder).
+- **Validité des fichiers sur le serveur** : 100 % des fichiers images existent sur le disque, ont des balises `<g:image_link>` valides et renvoient `HTTP 200 OK` avec le bon Content-Type et un binaire intact lorsqu'ils sont testés avec le User-Agent de Meta (`facebookexternalhit/1.1`).
+- **Log d'import Meta vide (0 erreur)** : L'ingestion XML du flux est syntaxiquement validée par Meta. C'est le worker de téléchargement asynchrone des vignettes de Meta qui échoue sans bloquer l'import global du catalogue.
+
+### 2. Cause racine : Saturation par requêtes concurrentes (Mass Crawl)
+- Lors de l'ingestion d'un catalogue de 1 000 à 5 000 références, le robot de Meta lance des dizaines de requêtes simultanées en quelques secondes sur le chemin `/wp-content/uploads/`.
+- Les couches de sécurité Cloudflare Enterprise / Rocket.net WAF déclenchent une limitation de débit (Rate-Limiting) ou un challenge `__cf_bm` après les premières requêtes, produisant une défaillance en blocs consécutifs de produits bloqués.
+
+### 3. Solution stratégique : Déportation des images sur un CDN tiers (Origin Pull)
+- Pour immuniser le catalogue contre le rate-limiting du serveur d'origine, le flux doit pouvoir réécrire les URLs d'images vers un CDN / Origin Proxy dédié (ex: ImageKit.io plan gratuit 20 Go/mois) capable d'encaisser des milliers de requêtes concurrentes sans blocage WAF et de normaliser les visuels (carré 1:1, fallback JPEG).
+
+
