@@ -274,7 +274,7 @@
 			}
 
 			$btn.prop('disabled', true).addClass('loading');
-			$res.show().html('<span class="spinner is-active" style="float:none; margin: 0 6px 0 0;"></span> Test de téléchargement CDN via le User-Agent de Meta...');
+			$res.show().html('<div class="woo-meta-cdn-alert woo-meta-cdn-alert-info" style="display:flex; align-items:center; gap:8px;"><span class="spinner is-active" style="float:none; margin: 0;"></span> <span>Test de téléchargement CDN via le User-Agent de Meta...</span></div>');
 
 			$.ajax({
 				url: wooMetaCatalogVars.ajaxUrl,
@@ -292,29 +292,29 @@
 					$btn.prop('disabled', false).removeClass('loading');
 					if (response.success && response.data) {
 						var d = response.data;
-						var html = '<div class="notice notice-success inline" style="margin: 6px 0; padding: 10px 14px; border-left: 4px solid #10b981; background: #ecfdf5; border-radius: 4px;">';
-						html += '<p style="margin: 0; color: #065f46; font-size: 13px;"><strong><span class="dashicons dashicons-yes" style="vertical-align: middle; color: #10b981;"></span> ' + d.message + '</strong></p>';
+						var html = '<div class="woo-meta-cdn-alert woo-meta-cdn-alert-success">';
+						html += '<p style="margin: 0; color: #065f46; font-size: 13px; font-weight: 600;"><span class="dashicons dashicons-yes" style="vertical-align: middle; color: #10b981; font-size: 18px; width: 18px; height: 18px; margin-right: 4px;"></span> ' + d.message + '</p>';
 						if (d.cdn_url) {
-							html += '<div style="margin-top: 8px; display: flex; align-items: center; gap: 12px;">';
-							html += '<img src="' + d.cdn_url + '" alt="Aperçu CDN" style="width: 70px; height: 70px; object-fit: contain; border: 1px solid #d1fae5; background: #fff; border-radius: 4px;" />';
-							html += '<div style="font-size: 12px; color: #047857; word-break: break-all;">';
+							html += '<div style="margin-top: 10px; display: flex; align-items: center; gap: 14px; background: #ffffff; padding: 10px 12px; border-radius: 6px; border: 1px solid #d1fae5;">';
+							html += '<img src="' + d.cdn_url + '" alt="Aperçu CDN" style="width: 70px; height: 70px; object-fit: contain; border: 1px solid #e5e7eb; background: #f9fafb; border-radius: 4px; flex-shrink: 0;" />';
+							html += '<div style="font-size: 12px; color: #047857; word-break: break-all; line-height: 1.5;">';
 							html += '<div><strong>Produit testé :</strong> ' + (d.product_name || 'Échantillon') + '</div>';
-							html += '<div><strong>URL CDN :</strong> <a href="' + d.cdn_url + '" target="_blank" style="color: #059669; text-decoration: underline;">' + d.cdn_url + '</a></div>';
+							html += '<div style="margin-top: 4px;"><strong>URL CDN délivrée :</strong> <a href="' + d.cdn_url + '" target="_blank" rel="noopener" style="color: #059669; text-decoration: underline; font-family: monospace;">' + d.cdn_url + '</a></div>';
 							html += '</div></div>';
 						}
 						html += '</div>';
-						$res.html(html);
+						$res.html(html).show();
 					} else {
 						var msg = (response.data && response.data.message) ? response.data.message : 'Erreur inconnue lors du test.';
-						var html = '<div class="notice notice-error inline" style="margin: 6px 0; padding: 10px 14px; border-left: 4px solid #ef4444; background: #fef2f2; border-radius: 4px;">';
-						html += '<p style="margin: 0; color: #991b1b; font-size: 13px;"><strong><span class="dashicons dashicons-warning" style="vertical-align: middle; color: #ef4444;"></span> ' + msg + '</strong></p>';
+						var html = '<div class="woo-meta-cdn-alert woo-meta-cdn-alert-error">';
+						html += '<p style="margin: 0; color: #991b1b; font-size: 13px; font-weight: 600;"><span class="dashicons dashicons-warning" style="vertical-align: middle; color: #ef4444; font-size: 18px; width: 18px; height: 18px; margin-right: 4px;"></span> ' + msg + '</p>';
 						html += '</div>';
-						$res.html(html);
+						$res.html(html).show();
 					}
 				},
-				error: function() {
+				error: function(xhr, status, error) {
 					$btn.prop('disabled', false).removeClass('loading');
-					$res.html('<div class="notice notice-error inline" style="margin: 6px 0; padding: 10px 14px; border-left: 4px solid #ef4444; background: #fef2f2; border-radius: 4px;"><p style="margin: 0; color: #991b1b; font-size: 13px;">Erreur de communication AJAX avec le serveur.</p></div>');
+					$res.html('<div class="woo-meta-cdn-alert woo-meta-cdn-alert-error"><p style="margin: 0; color: #991b1b; font-size: 13px; font-weight: 600;">Erreur de communication AJAX avec le serveur (' + (error || status) + ').</p></div>').show();
 				}
 			});
 		});

@@ -741,8 +741,8 @@ class Feed_Admin {
 										<strong style="color: #0f172a;"><?php esc_html_e( 'Configuration rapide ImageKit.io en 3 étapes (Gratuit) :', 'woo-meta-catalog' ); ?></strong>
 										<ol style="margin: 6px 0 0 18px; padding: 0;">
 											<li><?php printf( __( 'Créez un compte gratuit sur <a href="%s" target="_blank" rel="noopener">imagekit.io</a> avec l\'email du client (aucun moyen de paiement requis).', 'woo-meta-catalog' ), 'https://imagekit.io/registration' ); ?></li>
-											<li><?php printf( __( 'Dans <em>External Storage > Origins > Add New</em>, choisissez <strong>Web Folder</strong> et entrez comme Base URL : <code>%s</code>', 'woo-meta-catalog' ), esc_html( home_url() ) ); ?></li>
-											<li><?php esc_html_e( 'Copiez votre <strong>URL-endpoint</strong> (ex: <code>https://ik.imagekit.io/client974</code>) et collez-la dans le champ ci-dessus.', 'woo-meta-catalog' ); ?></li>
+											<li><?php printf( __( 'Dans <em>External Storage > Origins > Add New</em>, choisissez <strong>Web Folder</strong> et entrez comme Base URL : <code>%s</code> (laissez les 2 cases optionnelles décochées).', 'woo-meta-catalog' ), esc_html( home_url() ) ); ?></li>
+											<li><?php _e( 'Copiez votre <strong>URL-endpoint</strong> (ex: <code>https://ik.imagekit.io/client974</code>) et collez-la dans le champ ci-dessus.', 'woo-meta-catalog' ); ?></li>
 										</ol>
 									</div>
 								</td>
