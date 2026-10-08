@@ -229,9 +229,11 @@ class Feed_Item {
 		}
 
 		// Internal labels for Meta Commerce Manager Product Sets segmentation.
-		$internal_labels = self::build_internal_labels( $product, $parent, $options );
-		if ( ! empty( $internal_labels ) ) {
-			$xml .= "\t\t\t<g:internal_label><![CDATA[" . self::sanitize_cdata( $internal_labels ) . "]]></g:internal_label>\n";
+		$internal_labels = self::get_internal_labels( $product, $parent, $options );
+		if ( ! empty( $internal_labels ) && is_array( $internal_labels ) ) {
+			foreach ( $internal_labels as $label ) {
+				$xml .= "\t\t\t<g:internal_label><![CDATA[" . self::sanitize_cdata( $label ) . "]]></g:internal_label>\n";
+			}
 		}
 
 		// Stock quantity if managed.
@@ -611,7 +613,7 @@ class Feed_Item {
 		// Replace ampersand with word 'et' for cleaner semantic naming in French stores.
 		$text = str_replace( '&', 'et', $text );
 
-		// Remove quotes, apostrophes, commas, brackets, braces, and backslashes to avoid breaking Meta array syntax ['val1','val2'].
+		// Remove quotes, apostrophes, commas, brackets, braces, and backslashes for clean XML tag value.
 		$text = str_replace( array( "'", '"', '`', '’', '‘', '[', ']', '{', '}', ',', '\\' ), ' ', $text );
 
 		// Remove non-printable control characters.
@@ -772,15 +774,16 @@ class Feed_Item {
 	}
 
 	/**
-	 * Build Meta-compliant internal_label string for <g:internal_label>.
-	 * Syntax: ['label1','label2','label3']
+	 * Build Meta-compliant internal_label list for <g:internal_label>.
+	 * Outputs individual <g:internal_label> tags per value without bracket/quote array syntax,
+	 * conforming to Meta's XML feed parser for Commerce Manager Product Sets.
 	 *
 	 * @param \WC_Product      $product Current product or variation.
 	 * @param \WC_Product|null $parent  Parent product if variation.
 	 * @param array            $options Plugin settings.
-	 * @return string|null Formatted string or null if empty.
+	 * @return array<string> List of cleaned label strings.
 	 */
-	public static function build_internal_labels( $product, $parent = null, $options = array() ) {
+	public static function get_internal_labels( $product, $parent = null, $options = array() ): array {
 		$labels    = array();
 		$target    = ( null !== $parent && is_a( $parent, '\WC_Product' ) ) ? $parent : $product;
 		$target_id = $target->get_id();
@@ -841,8 +844,16 @@ class Feed_Item {
 		 */
 		$labels = apply_filters( 'woo_meta_catalog_internal_labels', $labels, $product, $parent, $options );
 
-		if ( empty( $labels ) || ! is_array( $labels ) ) {
-			return null;
+		if ( empty( $labels ) ) {
+			return array();
+		}
+
+		if ( is_string( $labels ) ) {
+			$labels = array( $labels );
+		}
+
+		if ( ! is_array( $labels ) ) {
+			return array();
 		}
 
 		$clean_labels = array();
@@ -853,13 +864,19 @@ class Feed_Item {
 			}
 		}
 
-		$clean_labels = array_values( array_unique( $clean_labels ) );
+		return array_values( array_unique( $clean_labels ) );
+	}
 
-		if ( empty( $clean_labels ) ) {
-			return null;
-		}
-
-		return "['" . implode( "','", $clean_labels ) . "']";
+	/**
+	 * Backward compatibility wrapper for get_internal_labels().
+	 *
+	 * @param \WC_Product      $product Current product or variation.
+	 * @param \WC_Product|null $parent  Parent product if variation.
+	 * @param array            $options Plugin settings.
+	 * @return array<string> List of cleaned label strings.
+	 */
+	public static function build_internal_labels( $product, $parent = null, $options = array() ): array {
+		return self::get_internal_labels( $product, $parent, $options );
 	}
 
 	/**

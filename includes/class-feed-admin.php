@@ -846,7 +846,7 @@ class Feed_Admin {
 										<?php esc_html_e( 'Étiquettes internes Meta (<g:internal_label> / Ensembles de produits)', 'woo-meta-catalog' ); ?>
 									</h3>
 									<p class="description" style="margin-top: 6px;">
-										<?php esc_html_e( 'Permet de segmenter vos produits dans Meta Commerce Manager pour créer des ensembles dynamiques (Product Sets) sans limite et sans déclencher de réexamen publicitaire.', 'woo-meta-catalog' ); ?>
+										<?php esc_html_e( 'Permet de segmenter vos produits dans Meta Commerce Manager pour créer des ensembles dynamiques (Product Sets) sans limite et sans déclencher de réexamen publicitaire. Dans Meta Ads / Commerce Manager, créez votre ensemble avec le filtre Attribut "Étiquette interne" et sélectionnez ou saisissez directement le nom du marqueur (ex : promo, bestseller).', 'woo-meta-catalog' ); ?>
 									</p>
 								</th>
 							</tr>
