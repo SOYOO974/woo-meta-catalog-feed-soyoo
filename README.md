@@ -137,6 +137,13 @@ Consommé par `woo-fb-tracking-server-side` v2.1.0+ (mode « auto ») : `apply_f
 
 ## 📝 Changelog
 
+### 1.9.1
+- **Prise en compte des statuts de commande personnalisés** : remplacement de la liste blanche fixe (`completed`, `processing`) par une liste d'exclusion des commandes non payées/annulées (`pending`, `failed`, `cancelled`, `refunded`, `on-hold`, `checkout-draft`, `trash`, `auto-draft`). Intègre un nouveau filtre `woo_meta_catalog_trending_excluded_statuses`. Les commandes en cours de préparation, expédition ou retrait en boutique (ex: `preparing`, `shipping`, `pickup` sur KidShow.fr) sont désormais comptabilisées à 100 %.
+- **Champ N dédié pour le mode saisonnier** : séparation de `label_trending_seasonal_count` (défaut 60) et `label_trending_count` (défaut 35, mode classique), éliminant tout écrasement accidentel. Les champs du mode inactif sont automatiquement désactivés (`disabled`) dans l'interface d'administration.
+- **Éligibilité individuelle des variations** : en mode saisonnier, les variations dont le parent est sélectionné ne reçoivent le marqueur que si elles respectent individuellement le stock minimum et le prix effectif minimum configurés.
+- **Fiabilisation de l'alerte fiches renouvelées (`b1_warning`)** : calcul de la couverture de B1 effectué sur la sélection initiale (avant l'absorption des débordements de A) pour conserver la visibilité des fiches recréées.
+- **Alignement temporel HPOS / GMT** : conversion explicite des bornes locales en GMT lors des requêtes sur les colonnes `date_created_gmt` et `post_date_gmt`.
+
 ### 1.9.0
 - **Mode Tendance Saisonnière Multi-Sources** : ajout de l'algorithme saisonnier combinant ventes récentes (Source A), même période l'année précédente (Source B1) et repli automatique par catégorie la plus précise (Source B2).
 - **Repli Catégorie Intelligent & Distribution Round-Robin** : si les articles de l'an dernier sont épuisés ou recréés sous de nouvelles fiches (ex: Halloween/Noël sur KidShow.fr), le moteur identifie la catégorie feuille de chaque article et sélectionne à tour de rôle les nouveautés publiées et en stock dans ces rayons.

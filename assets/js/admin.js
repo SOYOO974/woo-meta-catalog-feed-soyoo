@@ -489,16 +489,38 @@
 			}
 		});
 
-		$('.trending-mode-radio').on('change', function() {
-			var mode = $('input[name="label_trending_mode"]:checked').val();
+		function setTrendingMode(mode, animate) {
 			if (mode === 'seasonal') {
-				$('#trending-fields-classic').slideUp(150);
-				$('#trending-fields-seasonal').slideDown(200);
+				if (animate) {
+					$('#trending-fields-classic').slideUp(150);
+					$('#trending-fields-seasonal').slideDown(200);
+				} else {
+					$('#trending-fields-classic').hide();
+					$('#trending-fields-seasonal').show();
+				}
+				$('#trending-fields-classic :input').prop('disabled', true);
+				$('#trending-fields-seasonal :input').prop('disabled', false);
 			} else {
-				$('#trending-fields-seasonal').slideUp(150);
-				$('#trending-fields-classic').slideDown(200);
+				if (animate) {
+					$('#trending-fields-seasonal').slideUp(150);
+					$('#trending-fields-classic').slideDown(200);
+				} else {
+					$('#trending-fields-seasonal').hide();
+					$('#trending-fields-classic').show();
+				}
+				$('#trending-fields-seasonal :input').prop('disabled', true);
+				$('#trending-fields-classic :input').prop('disabled', false);
 			}
+		}
+
+		$('.trending-mode-radio').on('change', function() {
+			var mode = $('input[name="label_trending_mode"]:checked').val() || 'classic';
+			setTrendingMode(mode, true);
 		});
+
+		// Initialize disabled state on page load
+		var initialTrendingMode = $('input[name="label_trending_mode"]:checked').val() || 'classic';
+		setTrendingMode(initialTrendingMode, false);
 
 		$('#label_trending_enable_atc').on('change', function() {
 			if ($(this).is(':checked')) {

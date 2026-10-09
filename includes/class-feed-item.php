@@ -991,17 +991,33 @@ class Feed_Item {
 	/**
 	 * Query net sales quantities by parent product ID across a date range.
 	 *
-	 * @param string      $start_date_sql Start date Y-m-d H:i:s.
-	 * @param string|null $end_date_sql   End date Y-m-d H:i:s (optional).
+	 * @param string      $start_date_sql Start date Y-m-d H:i:s (site local time).
+	 * @param string|null $end_date_sql   End date Y-m-d H:i:s (site local time, optional).
 	 * @return array<int, array{product_id: int, net_sales: int}> List of rows.
 	 */
 	public static function query_net_sales( $start_date_sql, $end_date_sql = null ) {
 		global $wpdb;
 
 		$results = array();
-		$statuses = array( 'wc-completed', 'wc-processing', 'completed', 'processing' );
-		$placeholders = implode( ',', array_fill( 0, count( $statuses ), '%s' ) );
 
+		// Default excluded statuses (unpaid, aborted, or cancelled).
+		$default_excluded = array( 'pending', 'failed', 'cancelled', 'refunded', 'on-hold', 'checkout-draft', 'trash', 'auto-draft' );
+		/**
+		 * Filter the excluded order statuses for trending calculation.
+		 *
+		 * @param array $default_excluded List of status slugs to exclude.
+		 */
+		$excluded = apply_filters( 'woo_meta_catalog_trending_excluded_statuses', $default_excluded );
+		$all_excluded = array();
+		foreach ( (array) $excluded as $st ) {
+			$clean          = ltrim( (string) $st, 'wc-' );
+			$all_excluded[] = $clean;
+			$all_excluded[] = 'wc-' . $clean;
+		}
+		$all_excluded = array_values( array_unique( $all_excluded ) );
+		$placeholders = implode( ',', array_fill( 0, count( $all_excluded ), '%s' ) );
+
+		// 1. First priority: WooCommerce Analytics lookup & stats tables (date_created is local time).
 		if ( self::has_order_lookup_table() ) {
 			$order_table = $wpdb->prefix . 'wc_order_product_lookup';
 			$stats_table = $wpdb->prefix . 'wc_order_stats';
@@ -1014,12 +1030,12 @@ class Feed_Item {
 						 FROM {$order_table} o
 						 INNER JOIN {$stats_table} s ON o.order_id = s.order_id
 						 WHERE o.date_created >= %s AND o.date_created <= %s
-						   AND s.status IN ($placeholders)
+						   AND s.status NOT IN ($placeholders)
 						 GROUP BY o.product_id
 						 HAVING net_sales > 0
 						 ORDER BY net_sales DESC
 						 LIMIT 600",
-						array_merge( array( $start_date_sql, $end_date_sql ), $statuses )
+						array_merge( array( $start_date_sql, $end_date_sql ), $all_excluded )
 					);
 				} else {
 					$sql = $wpdb->prepare(
@@ -1027,12 +1043,12 @@ class Feed_Item {
 						 FROM {$order_table} o
 						 INNER JOIN {$stats_table} s ON o.order_id = s.order_id
 						 WHERE o.date_created >= %s
-						   AND s.status IN ($placeholders)
+						   AND s.status NOT IN ($placeholders)
 						 GROUP BY o.product_id
 						 HAVING net_sales > 0
 						 ORDER BY net_sales DESC
 						 LIMIT 600",
-						array_merge( array( $start_date_sql ), $statuses )
+						array_merge( array( $start_date_sql ), $all_excluded )
 					);
 				}
 				$raw = $wpdb->get_results( $sql, ARRAY_A );
@@ -1048,7 +1064,11 @@ class Feed_Item {
 			}
 		}
 
-		// Fallback: check if HPOS table wc_orders exists, else wp_posts.
+		// Convert local time bounds to GMT for date_created_gmt / post_date_gmt queries.
+		$start_date_gmt = function_exists( 'get_gmt_from_date' ) ? get_gmt_from_date( $start_date_sql ) : gmdate( 'Y-m-d H:i:s', strtotime( $start_date_sql ) );
+		$end_date_gmt   = ( $end_date_sql && function_exists( 'get_gmt_from_date' ) ) ? get_gmt_from_date( $end_date_sql ) : ( $end_date_sql ? gmdate( 'Y-m-d H:i:s', strtotime( $end_date_sql ) ) : null );
+
+		// 2. Fallback: check if HPOS table wc_orders exists, else wp_posts.
 		$orders_table = $wpdb->prefix . 'wc_orders';
 		$has_hpos     = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $orders_table ) ) === $orders_table );
 
@@ -1056,8 +1076,7 @@ class Feed_Item {
 		$order_item_meta = $wpdb->prefix . 'woocommerce_order_itemmeta';
 
 		if ( $has_hpos ) {
-			$date_col = 'date_created_gmt';
-			if ( $end_date_sql ) {
+			if ( $end_date_gmt ) {
 				$sql = $wpdb->prepare(
 					"SELECT CAST(p_meta.meta_value AS UNSIGNED) AS product_id,
 					        SUM(CAST(q_meta.meta_value AS SIGNED)) AS net_sales
@@ -1065,13 +1084,13 @@ class Feed_Item {
 					 INNER JOIN {$order_item_meta} p_meta ON oi.order_item_id = p_meta.order_item_id AND p_meta.meta_key = '_product_id'
 					 INNER JOIN {$order_item_meta} q_meta ON oi.order_item_id = q_meta.order_item_id AND q_meta.meta_key = '_qty'
 					 INNER JOIN {$orders_table} o ON oi.order_id = o.id
-					 WHERE o.status IN ($placeholders)
-					   AND o.{$date_col} >= %s AND o.{$date_col} <= %s
+					 WHERE o.status NOT IN ($placeholders)
+					   AND o.date_created_gmt >= %s AND o.date_created_gmt <= %s
 					 GROUP BY product_id
 					 HAVING net_sales > 0
 					 ORDER BY net_sales DESC
 					 LIMIT 600",
-					array_merge( $statuses, array( $start_date_sql, $end_date_sql ) )
+					array_merge( $all_excluded, array( $start_date_gmt, $end_date_gmt ) )
 				);
 			} else {
 				$sql = $wpdb->prepare(
@@ -1081,13 +1100,13 @@ class Feed_Item {
 					 INNER JOIN {$order_item_meta} p_meta ON oi.order_item_id = p_meta.order_item_id AND p_meta.meta_key = '_product_id'
 					 INNER JOIN {$order_item_meta} q_meta ON oi.order_item_id = q_meta.order_item_id AND q_meta.meta_key = '_qty'
 					 INNER JOIN {$orders_table} o ON oi.order_id = o.id
-					 WHERE o.status IN ($placeholders)
-					   AND o.{$date_col} >= %s
+					 WHERE o.status NOT IN ($placeholders)
+					   AND o.date_created_gmt >= %s
 					 GROUP BY product_id
 					 HAVING net_sales > 0
 					 ORDER BY net_sales DESC
 					 LIMIT 600",
-					array_merge( $statuses, array( $start_date_sql ) )
+					array_merge( $all_excluded, array( $start_date_gmt ) )
 				);
 			}
 			$raw = $wpdb->get_results( $sql, ARRAY_A );
@@ -1102,8 +1121,8 @@ class Feed_Item {
 			}
 		}
 
-		// Legacy wp_posts fallback.
-		if ( $end_date_sql ) {
+		// 3. Legacy wp_posts fallback.
+		if ( $end_date_gmt ) {
 			$sql = $wpdb->prepare(
 				"SELECT CAST(p_meta.meta_value AS UNSIGNED) AS product_id,
 				        SUM(CAST(q_meta.meta_value AS SIGNED)) AS net_sales
@@ -1112,13 +1131,13 @@ class Feed_Item {
 				 INNER JOIN {$order_item_meta} q_meta ON oi.order_item_id = q_meta.order_item_id AND q_meta.meta_key = '_qty'
 				 INNER JOIN {$wpdb->posts} o ON oi.order_id = o.ID
 				 WHERE o.post_type = 'shop_order'
-				   AND o.post_status IN ($placeholders)
+				   AND o.post_status NOT IN ($placeholders)
 				   AND o.post_date_gmt >= %s AND o.post_date_gmt <= %s
 				 GROUP BY product_id
 				 HAVING net_sales > 0
 				 ORDER BY net_sales DESC
 				 LIMIT 600",
-				array_merge( $statuses, array( $start_date_sql, $end_date_sql ) )
+				array_merge( $all_excluded, array( $start_date_gmt, $end_date_gmt ) )
 			);
 		} else {
 			$sql = $wpdb->prepare(
@@ -1129,13 +1148,13 @@ class Feed_Item {
 				 INNER JOIN {$order_item_meta} q_meta ON oi.order_item_id = q_meta.order_item_id AND q_meta.meta_key = '_qty'
 				 INNER JOIN {$wpdb->posts} o ON oi.order_id = o.ID
 				 WHERE o.post_type = 'shop_order'
-				   AND o.post_status IN ($placeholders)
+				   AND o.post_status NOT IN ($placeholders)
 				   AND o.post_date_gmt >= %s
 				 GROUP BY product_id
 				 HAVING net_sales > 0
 				 ORDER BY net_sales DESC
 				 LIMIT 600",
-				array_merge( $statuses, array( $start_date_sql ) )
+				array_merge( $all_excluded, array( $start_date_gmt ) )
 			);
 		}
 		$raw = $wpdb->get_results( $sql, ARRAY_A );
@@ -1498,7 +1517,7 @@ class Feed_Item {
 			$options = get_option( 'woo_meta_catalog_settings', array() );
 		}
 
-		$N                    = ! empty( $options['label_trending_count'] ) ? max( 1, (int) $options['label_trending_count'] ) : 60;
+		$N                    = ! empty( $options['label_trending_seasonal_count'] ) ? max( 1, (int) $options['label_trending_seasonal_count'] ) : ( ! empty( $options['label_trending_count'] ) ? max( 1, (int) $options['label_trending_count'] ) : 60 );
 		$recent_ratio         = isset( $options['label_trending_recent_ratio'] ) ? max( 0.0, min( 100.0, (float) $options['label_trending_recent_ratio'] ) ) : 60.0;
 		$recent_days          = ! empty( $options['label_trending_recent_days'] ) ? max( 1, (int) $options['label_trending_recent_days'] ) : 15;
 		$enable_atc           = ! empty( $options['label_trending_enable_atc'] );
@@ -1671,6 +1690,10 @@ class Feed_Item {
 				$remaining_candidates_b1[ $pid ] = $cand;
 			}
 		}
+
+		// Avertissement calculé sur la sélection initiale de B1 (avant remplissage des places de A par la suite de B1)
+		// afin de ne pas masquer un site qui recrée ses fiches d'une année sur l'autre.
+		$b1_warning = ( $quota_b > 0 && count( $selected_b1 ) < ( $quota_b / 2 ) );
 
 		// -------------------------------------------------------------
 		// SOURCE B2: Repli par catégorie (si B1 < quota B)
@@ -1864,9 +1887,6 @@ class Feed_Item {
 			$final_items[ $pid ] = $item;
 		}
 
-		// Avertissement si B1 couvre moins de la moitié du quota B.
-		$b1_warning = ( count( $selected_b1 ) < ( $quota_b / 2 ) );
-
 		$cache_data = array(
 			'timestamp'     => time(),
 			'calculated_at' => wp_date( 'd/m/Y à H:i:s' ),
@@ -1909,19 +1929,58 @@ class Feed_Item {
 			return false;
 		}
 
-		$pid = (int) $product->get_id();
-		if ( isset( $trending_map[ $pid ] ) ) {
-			return true;
+		if ( empty( $options ) ) {
+			$options = get_option( 'woo_meta_catalog_settings', array() );
 		}
+		$mode = ! empty( $options['label_trending_mode'] ) ? $options['label_trending_mode'] : 'classic';
 
-		if ( $parent ) {
+		$pid     = (int) $product->get_id();
+		$matched = false;
+
+		if ( isset( $trending_map[ $pid ] ) ) {
+			$matched = true;
+		} elseif ( $parent && is_a( $parent, '\WC_Product' ) ) {
 			$parent_id = (int) $parent->get_id();
 			if ( isset( $trending_map[ $parent_id ] ) ) {
-				return true;
+				$matched = true;
 			}
 		}
 
-		return false;
+		if ( ! $matched ) {
+			return false;
+		}
+
+		// In classic mode, historical behavior applies without variation-level filtering.
+		if ( 'seasonal' !== $mode ) {
+			return true;
+		}
+
+		// In seasonal mode, when product is a variation, validate its own min stock and min price.
+		if ( $product->is_type( 'variation' ) || $parent ) {
+			$min_stock = isset( $options['label_trending_min_stock'] ) ? max( 1, (int) $options['label_trending_min_stock'] ) : 2;
+			$min_price = isset( $options['label_trending_min_price'] ) ? max( 0.0, (float) $options['label_trending_min_price'] ) : 8.0;
+
+			// 1. Stock check: variation stock if managed, else parent stock if managed, else unmanaged = OK.
+			if ( $product->managing_stock() ) {
+				$v_qty = $product->get_stock_quantity();
+				if ( null !== $v_qty && $v_qty < $min_stock ) {
+					return false;
+				}
+			} elseif ( $parent && is_a( $parent, '\WC_Product' ) && $parent->managing_stock() ) {
+				$p_qty = $parent->get_stock_quantity();
+				if ( null !== $p_qty && $p_qty < $min_stock ) {
+					return false;
+				}
+			}
+
+			// 2. Effective price check on variation.
+			$v_price = $product->get_price();
+			if ( '' === $v_price || null === $v_price || (float) $v_price < $min_price ) {
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	/**

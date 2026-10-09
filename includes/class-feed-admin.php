@@ -624,6 +624,7 @@ class Feed_Admin {
 			'label_enable_trending'                => isset( $_POST['label_enable_trending'] ) ? 1 : 0,
 			'label_trending_mode'                  => isset( $_POST['label_trending_mode'] ) && 'seasonal' === $_POST['label_trending_mode'] ? 'seasonal' : 'classic',
 			'label_trending_count'                 => max( 1, intval( $_POST['label_trending_count'] ?? 35 ) ),
+			'label_trending_seasonal_count'        => max( 1, intval( $_POST['label_trending_seasonal_count'] ?? 60 ) ),
 			'label_trending_days'                  => max( 1, intval( $_POST['label_trending_days'] ?? 45 ) ),
 			'label_trending_tag'                   => sanitize_text_field( wp_unslash( $_POST['label_trending_tag'] ?? 'tendance' ) ),
 			'label_trending_recent_ratio'          => max( 0.0, min( 100.0, floatval( $_POST['label_trending_recent_ratio'] ?? 60.0 ) ) ),
@@ -1301,7 +1302,7 @@ class Feed_Admin {
 													</h5>
 													<div style="margin-bottom: 10px;">
 														<label for="label_trending_count_seasonal"><?php esc_html_e( 'Nombre total de produits (N) :', 'woo-meta-catalog' ); ?></label><br>
-														<input name="label_trending_count" type="number" min="1" id="label_trending_count_seasonal" value="<?php echo esc_attr( $options['label_trending_count'] ?? 60 ); ?>" class="small-text" />
+														<input name="label_trending_seasonal_count" type="number" min="1" id="label_trending_count_seasonal" value="<?php echo esc_attr( $options['label_trending_seasonal_count'] ?? ( $options['label_trending_count'] ?? 60 ) ); ?>" class="small-text" />
 													</div>
 													<div>
 														<label for="label_trending_recent_ratio"><?php esc_html_e( 'Part ventes récentes (%) :', 'woo-meta-catalog' ); ?></label><br>
