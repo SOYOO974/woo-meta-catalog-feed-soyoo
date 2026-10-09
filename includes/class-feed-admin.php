@@ -482,16 +482,16 @@ class Feed_Admin {
 					<?php esc_html_e( 'Aucun produit calculé pour le moment. Cliquez sur « Recalculer maintenant » pour générer la sélection.', 'woo-meta-catalog' ); ?>
 				</p>
 			<?php else : ?>
-				<div style="max-height: 420px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 4px;">
-					<table class="wp-list-table widefat fixed striped" style="border: none; margin: 0;">
+				<div style="max-height: 460px; overflow-y: auto; overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 6px;">
+					<table class="wp-list-table widefat striped" style="border: none; margin: 0; width: 100%;">
 						<thead style="position: sticky; top: 0; background: #f8fafc; z-index: 2;">
 							<tr>
-								<th style="width: 40px; text-align: center;">#</th>
-								<th style="min-width: 220px;"><?php esc_html_e( 'Produit', 'woo-meta-catalog' ); ?></th>
-								<th style="width: 140px;"><?php esc_html_e( 'Source', 'woo-meta-catalog' ); ?></th>
-								<th style="width: 150px;"><?php esc_html_e( 'Score / Ventes', 'woo-meta-catalog' ); ?></th>
-								<th style="width: 100px;"><?php esc_html_e( 'Prix effectif', 'woo-meta-catalog' ); ?></th>
-								<th style="width: 100px;"><?php esc_html_e( 'Stock', 'woo-meta-catalog' ); ?></th>
+								<th style="width: 44px; text-align: center;">#</th>
+								<th style="min-width: 260px;"><?php esc_html_e( 'Produit', 'woo-meta-catalog' ); ?></th>
+								<th style="width: 130px; white-space: nowrap;"><?php esc_html_e( 'Source', 'woo-meta-catalog' ); ?></th>
+								<th style="width: 140px; white-space: nowrap;"><?php esc_html_e( 'Score / Ventes', 'woo-meta-catalog' ); ?></th>
+								<th style="width: 110px; white-space: nowrap;"><?php esc_html_e( 'Prix effectif', 'woo-meta-catalog' ); ?></th>
+								<th style="width: 110px; white-space: nowrap;"><?php esc_html_e( 'Stock', 'woo-meta-catalog' ); ?></th>
 								<th style="width: 160px;"><?php esc_html_e( 'Catégorie repli', 'woo-meta-catalog' ); ?></th>
 							</tr>
 						</thead>
@@ -622,7 +622,7 @@ class Feed_Admin {
 			$trending_enable_cat_fallback   = isset( $existing['label_trending_enable_cat_fallback'] ) ? ( ! empty( $existing['label_trending_enable_cat_fallback'] ) ? 1 : 0 ) : 1;
 			$trending_cat_fallback_cap      = isset( $existing['label_trending_cat_fallback_cap'] ) ? max( 0.0, min( 100.0, floatval( $existing['label_trending_cat_fallback_cap'] ) ) ) : 15.0;
 			$trending_cat_fallback_excluded = isset( $existing['label_trending_cat_fallback_excluded'] ) && is_array( $existing['label_trending_cat_fallback_excluded'] ) ? array_map( 'intval', $existing['label_trending_cat_fallback_excluded'] ) : array();
-			$trending_min_price             = isset( $existing['label_trending_min_price'] ) ? max( 0.0, floatval( $existing['label_trending_min_price'] ) ) : 8.0;
+			$trending_min_price             = max( 0.0, floatval( $_POST['label_trending_min_price'] ?? ( $existing['label_trending_min_price'] ?? 8.0 ) ) );
 			$trending_min_stock             = isset( $existing['label_trending_min_stock'] ) ? max( 1, intval( $existing['label_trending_min_stock'] ) ) : 2;
 		}
 
@@ -658,10 +658,11 @@ class Feed_Admin {
 			'label_new_days'           => max( 1, intval( $_POST['label_new_days'] ?? 30 ) ),
 			'label_new_count'          => max( 1, intval( $_POST['label_new_count'] ?? 50 ) ),
 			'label_new_tag'            => sanitize_text_field( wp_unslash( $_POST['label_new_tag'] ?? 'nouveaute' ) ),
-			'label_enable_bestseller'  => isset( $_POST['label_enable_bestseller'] ) ? 1 : 0,
-			'label_bestseller_count'   => max( 1, intval( $_POST['label_bestseller_count'] ?? ( $_POST['label_bestseller_value'] ?? 100 ) ) ),
-			'label_bestseller_value'   => max( 1, intval( $_POST['label_bestseller_count'] ?? ( $_POST['label_bestseller_value'] ?? 100 ) ) ),
-			'label_bestseller_tag'     => sanitize_text_field( wp_unslash( $_POST['label_bestseller_tag'] ?? 'bestseller' ) ),
+			'label_enable_bestseller'    => isset( $_POST['label_enable_bestseller'] ) ? 1 : 0,
+			'label_bestseller_count'     => max( 1, intval( $_POST['label_bestseller_count'] ?? ( $_POST['label_bestseller_value'] ?? 100 ) ) ),
+			'label_bestseller_value'     => max( 1, intval( $_POST['label_bestseller_count'] ?? ( $_POST['label_bestseller_value'] ?? 100 ) ) ),
+			'label_bestseller_min_price' => max( 0.0, floatval( $_POST['label_bestseller_min_price'] ?? ( $existing['label_bestseller_min_price'] ?? 8.0 ) ) ),
+			'label_bestseller_tag'       => sanitize_text_field( wp_unslash( $_POST['label_bestseller_tag'] ?? 'bestseller' ) ),
 			'label_enable_trending'                => isset( $_POST['label_enable_trending'] ) ? 1 : 0,
 			'label_trending_mode'                  => $submitted_mode,
 			'label_trending_count'                 => $trending_count,
@@ -1270,23 +1271,28 @@ class Feed_Admin {
 										<input name="label_enable_bestseller" type="checkbox" id="label_enable_bestseller" value="1" <?php checked( ! empty( $options['label_enable_bestseller'] ) ); ?> />
 										<?php esc_html_e( 'Ajouter automatiquement un marqueur pour les meilleures ventes', 'woo-meta-catalog' ); ?>
 									</label>
-									<div style="margin-top: 8px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+									<div style="margin-top: 10px; display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap;">
 										<div>
 											<?php
 											$bestseller_count = ! empty( $options['label_bestseller_count'] )
 												? (int) $options['label_bestseller_count']
 												: ( ( isset( $options['label_bestseller_mode'] ) && 'percentage' === $options['label_bestseller_mode'] ) ? 100 : ( $options['label_bestseller_value'] ?? 100 ) );
 											?>
-											<label for="label_bestseller_count"><?php esc_html_e( 'Nombre de produits (Top N) :', 'woo-meta-catalog' ); ?></label>
+											<label for="label_bestseller_count"><strong><?php esc_html_e( 'Nombre de produits (Top N) :', 'woo-meta-catalog' ); ?></strong></label><br>
 											<input name="label_bestseller_count" type="number" min="1" id="label_bestseller_count" value="<?php echo esc_attr( $bestseller_count ); ?>" class="small-text" />
 										</div>
 										<div>
-											<label for="label_bestseller_tag"><?php esc_html_e( 'Nom du marqueur :', 'woo-meta-catalog' ); ?></label>
+											<label for="label_bestseller_min_price"><strong><?php esc_html_e( 'Prix effectif minimum (€) :', 'woo-meta-catalog' ); ?></strong></label><br>
+											<input name="label_bestseller_min_price" type="number" step="0.5" min="0" id="label_bestseller_min_price" value="<?php echo esc_attr( $options['label_bestseller_min_price'] ?? '8.0' ); ?>" class="small-text" /> €
+											<p class="description" style="margin-top: 2px; font-size: 11px;"><?php esc_html_e( 'Exclut les articles vendus sous ce seuil de prix.', 'woo-meta-catalog' ); ?></p>
+										</div>
+										<div>
+											<label for="label_bestseller_tag"><strong><?php esc_html_e( 'Nom du marqueur :', 'woo-meta-catalog' ); ?></strong></label><br>
 											<input name="label_bestseller_tag" type="text" id="label_bestseller_tag" value="<?php echo esc_attr( $options['label_bestseller_tag'] ?? 'bestseller' ); ?>" class="regular-text" style="max-width: 160px;" />
 										</div>
 									</div>
-									<p class="description">
-										<?php esc_html_e( 'Identifie automatiquement les N produits en stock ayant le plus grand volume de ventes historiques (total_sales > 0) et leur applique l\'étiquette bestseller. Idéal pour cibler vos bestsellers en Advantage+ Catalog Ads.', 'woo-meta-catalog' ); ?>
+									<p class="description" style="margin-top: 6px;">
+										<?php esc_html_e( 'Identifie automatiquement les N produits en stock ayant le plus grand volume de ventes historiques (total_sales > 0) respectant le prix minimum, et leur applique l\'étiquette bestseller. Idéal pour cibler vos bestsellers en Advantage+ Catalog Ads.', 'woo-meta-catalog' ); ?>
 									</p>
 								</td>
 							</tr>
@@ -1302,8 +1308,12 @@ class Feed_Admin {
 									<p class="description" style="margin-top: 4px;">
 										<?php esc_html_e( 'Attribue le marqueur aux produits les plus performants. Idéal pour créer un ensemble dynamique « Tendances » dans Meta Ads Advantage+.', 'woo-meta-catalog' ); ?>
 									</p>
+								</td>
+							</tr>
 
-									<div id="woo-meta-trending-settings-wrap" style="margin-top: 15px; <?php echo empty( $options['label_enable_trending'] ) ? 'display: none;' : ''; ?>">
+							<tr id="woo-meta-trending-settings-row" style="<?php echo empty( $options['label_enable_trending'] ) ? 'display: none;' : ''; ?>">
+								<td colspan="2" style="padding: 10px 0 25px 0;">
+									<div id="woo-meta-trending-settings-wrap" style="background: #ffffff; border: 1px solid #c3c4c7; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);">
 										<!-- MODE SELECTOR -->
 										<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px 16px; margin-bottom: 15px;">
 											<div style="font-weight: 600; margin-bottom: 8px; color: #1e293b;"><?php esc_html_e( 'Algorithme de calcul :', 'woo-meta-catalog' ); ?></div>
@@ -1320,8 +1330,8 @@ class Feed_Admin {
 										</div>
 
 										<!-- CLASSIC SETTINGS -->
-										<div id="trending-fields-classic" style="<?php echo ( ! empty( $options['label_trending_mode'] ) && 'seasonal' === $options['label_trending_mode'] ) ? 'display: none;' : ''; ?> margin-bottom: 15px; background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px;">
-											<div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+										<div id="trending-fields-classic" style="<?php echo ( ! empty( $options['label_trending_mode'] ) && 'seasonal' === $options['label_trending_mode'] ) ? 'display: none;' : ''; ?> margin-bottom: 15px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px;">
+											<div style="display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap;">
 												<div>
 													<label for="label_trending_count_classic"><strong><?php esc_html_e( 'Nombre de produits (Top N) :', 'woo-meta-catalog' ); ?></strong></label><br>
 													<input name="label_trending_count" type="number" min="1" id="label_trending_count_classic" value="<?php echo esc_attr( $options['label_trending_count'] ?? 35 ); ?>" class="small-text" />
@@ -1329,6 +1339,11 @@ class Feed_Admin {
 												<div>
 													<label for="label_trending_days"><strong><?php esc_html_e( 'Ventes des derniers :', 'woo-meta-catalog' ); ?></strong></label><br>
 													<input name="label_trending_days" type="number" min="1" max="365" id="label_trending_days" value="<?php echo esc_attr( $options['label_trending_days'] ?? 45 ); ?>" class="small-text" /> <?php esc_html_e( 'jours', 'woo-meta-catalog' ); ?>
+												</div>
+												<div>
+													<label for="label_trending_min_price_classic"><strong><?php esc_html_e( 'Prix effectif minimum (€) :', 'woo-meta-catalog' ); ?></strong></label><br>
+													<input name="label_trending_min_price" type="number" step="0.5" min="0" id="label_trending_min_price_classic" value="<?php echo esc_attr( $options['label_trending_min_price'] ?? '8.0' ); ?>" class="small-text" /> €
+													<p class="description" style="margin-top: 2px; font-size: 11px;"><?php esc_html_e( 'Exclut les articles vendus sous ce seuil (ex: vis, consommables).', 'woo-meta-catalog' ); ?></p>
 												</div>
 											</div>
 										</div>

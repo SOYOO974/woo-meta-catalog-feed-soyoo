@@ -483,9 +483,12 @@
 		// 10. Trending Settings & Realtime Recalculation
 		$('#label_enable_trending').on('change', function() {
 			if ($(this).is(':checked')) {
+				$('#woo-meta-trending-settings-row').show();
 				$('#woo-meta-trending-settings-wrap').slideDown(200);
 			} else {
-				$('#woo-meta-trending-settings-wrap').slideUp(200);
+				$('#woo-meta-trending-settings-wrap').slideUp(200, function() {
+					$('#woo-meta-trending-settings-row').hide();
+				});
 			}
 		});
 

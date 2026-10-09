@@ -137,6 +137,18 @@ Consommé par `woo-fb-tracking-server-side` v2.1.0+ (mode « auto ») : `apply_f
 
 ## 📝 Changelog
 
+### 1.9.3
+- **Optimisation ergonomique & pleine largeur de l'interface d'administration** :
+  - Élargissement du conteneur principal `.woo-meta-catalog-wrap` à 1 440 px (au lieu de 1 100 px) pour exploiter les écrans larges modernes et supprimer l'espace gris inutilisé.
+  - Déplacement du panneau de configuration Tendance et du tableau de prévisualisation dans une rangée dédiée en pleine largeur (`colspan="2"`), éliminant la gouttière gauche vide de 200 px qui comprimait les colonnes.
+  - Suppression de la contrainte `fixed` sur le tableau de prévisualisation pour permettre une distribution responsive naturelle de la largeur des colonnes sans tronquer les titres produits.
+- **Filtre de prix effectif minimum pour les Meilleures Ventes (`label_bestseller_min_price`)** :
+  - Nouveau réglage paramétrable (défaut : 8,0 €) pour exclure du marqueur Best-Seller les articles à faible valeur unitaire (vis, consommables, échantillons).
+  - Filtrage optimisé dans la requête `wc_product_meta_lookup` (`max_price >= %f`) avec vérification individuelle du prix des déclinaisons en stock.
+- **Filtre de prix effectif minimum pour les Produits Tendances en Mode Classique (`label_trending_min_price`)** :
+  - Alignement du mode classique sur le seuil de prix minimum via `check_product_eligibility`, empêchant les articles à bas prix d'entrer dans le Top N des ventes récentes.
+  - Validation du prix effectif au niveau des déclinaisons dans `is_trending()`.
+
 ### 1.9.2
 - **Correctif bloquant sur le retrait du préfixe des statuts (`query_net_sales`)** : remplacement du découpage `ltrim( $st, 'wc-' )` (qui tronquait les statuts débutant par 'c' comme `cancelled` en `ancelled` ou `checkout-draft` en `heckout-draft`) par un test strict de préfixe `strpos( $clean, 'wc-' ) === 0`. Les commandes annulées et brouillons sont à nouveau rigoureusement exclues de l'agrégation des ventes.
 - **Préservation des réglages du mode inactif** : lors de l'enregistrement des réglages de l'extension, les champs du mode non sélectionné (qui sont désactivés dans le DOM pour éviter toute collision) ne sont plus écrasés par leurs valeurs par défaut codées en dur, mais fidèlement préservés depuis les réglages existants (`$existing`).

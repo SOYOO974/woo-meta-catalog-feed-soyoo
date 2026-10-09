@@ -765,6 +765,10 @@ class Feed_Item {
 			return self::$bestseller_ids_cache;
 		}
 
+		if ( empty( $options ) ) {
+			$options = get_option( 'woo_meta_catalog_settings', array() );
+		}
+
 		global $wpdb;
 		if ( ! empty( $options['label_bestseller_count'] ) ) {
 			$limit = max( 1, (int) $options['label_bestseller_count'] );
@@ -776,18 +780,32 @@ class Feed_Item {
 			$limit = 100;
 		}
 
+		$min_price   = isset( $options['label_bestseller_min_price'] ) ? max( 0.0, (float) $options['label_bestseller_min_price'] ) : 8.0;
+		$query_limit = ( $min_price > 0 ) ? max( 150, $limit * 3 ) : $limit;
+
 		$lookup_table = $wpdb->prefix . 'wc_product_meta_lookup';
 		$has_lookup   = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $lookup_table ) ) === $lookup_table );
 
 		if ( $has_lookup ) {
-			$sql = $wpdb->prepare(
-				"SELECT product_id FROM {$lookup_table} 
-				 WHERE stock_status = 'instock' AND total_sales > 0 
-				 ORDER BY total_sales DESC 
-				 LIMIT %d",
-				$limit
-			);
-			$ids = $wpdb->get_col( $sql );
+			if ( $min_price > 0 ) {
+				$sql = $wpdb->prepare(
+					"SELECT product_id FROM {$lookup_table} 
+					 WHERE stock_status = 'instock' AND total_sales > 0 AND max_price >= %f
+					 ORDER BY total_sales DESC 
+					 LIMIT %d",
+					$min_price,
+					$query_limit
+				);
+			} else {
+				$sql = $wpdb->prepare(
+					"SELECT product_id FROM {$lookup_table} 
+					 WHERE stock_status = 'instock' AND total_sales > 0 
+					 ORDER BY total_sales DESC 
+					 LIMIT %d",
+					$query_limit
+				);
+			}
+			$raw_ids = $wpdb->get_col( $sql );
 		} else {
 			$sql = $wpdb->prepare(
 				"SELECT p.ID FROM {$wpdb->posts} p
@@ -798,9 +816,43 @@ class Feed_Item {
 				   AND CAST(pm_sales.meta_value AS UNSIGNED) > 0
 				 ORDER BY CAST(pm_sales.meta_value AS UNSIGNED) DESC 
 				 LIMIT %d",
-				$limit
+				$query_limit
 			);
-			$ids = $wpdb->get_col( $sql );
+			$raw_ids = $wpdb->get_col( $sql );
+		}
+
+		$ids = array();
+		if ( ! empty( $raw_ids ) ) {
+			foreach ( $raw_ids as $pid ) {
+				$pid = (int) $pid;
+				if ( count( $ids ) >= $limit ) {
+					break;
+				}
+				if ( $min_price > 0 ) {
+					$p = wc_get_product( $pid );
+					if ( ! $p || ! $p->is_in_stock() || 'publish' !== $p->get_status() ) {
+						continue;
+					}
+					if ( $p->is_type( 'variable' ) ) {
+						$has_eligible_var = false;
+						foreach ( $p->get_children() as $cid ) {
+							$child = wc_get_product( $cid );
+							if ( $child && $child->is_in_stock() && (float) $child->get_price() >= $min_price ) {
+								$has_eligible_var = true;
+								break;
+							}
+						}
+						if ( ! $has_eligible_var ) {
+							continue;
+						}
+					} else {
+						if ( (float) $p->get_price() < $min_price ) {
+							continue;
+						}
+					}
+				}
+				$ids[] = $pid;
+			}
 		}
 
 		if ( empty( $ids ) ) {
@@ -823,6 +875,18 @@ class Feed_Item {
 	public static function is_bestseller( $product, $parent = null, $options = array() ) {
 		if ( ! $product || ! is_a( $product, '\WC_Product' ) || ! $product->is_in_stock() ) {
 			return false;
+		}
+
+		if ( empty( $options ) ) {
+			$options = get_option( 'woo_meta_catalog_settings', array() );
+		}
+		$min_price = isset( $options['label_bestseller_min_price'] ) ? max( 0.0, (float) $options['label_bestseller_min_price'] ) : 8.0;
+
+		if ( $min_price > 0 ) {
+			$price = $product->get_price();
+			if ( '' === $price || null === $price || (float) $price < $min_price ) {
+				return false;
+			}
 		}
 
 		$bestseller_map = self::get_bestseller_ids( $options );
@@ -1444,14 +1508,15 @@ class Feed_Item {
 			$options = get_option( 'woo_meta_catalog_settings', array() );
 		}
 
-		$limit = ! empty( $options['label_trending_count'] ) ? max( 1, (int) $options['label_trending_count'] ) : 35;
-		$days  = ! empty( $options['label_trending_days'] ) ? max( 1, (int) $options['label_trending_days'] ) : 45;
+		$limit     = ! empty( $options['label_trending_count'] ) ? max( 1, (int) $options['label_trending_count'] ) : 35;
+		$days      = ! empty( $options['label_trending_days'] ) ? max( 1, (int) $options['label_trending_days'] ) : 45;
+		$min_price = isset( $options['label_trending_min_price'] ) ? max( 0.0, (float) $options['label_trending_min_price'] ) : 8.0;
 
 		$cutoff_date = date( 'Y-m-d H:i:s', current_time( 'timestamp' ) - ( $days * DAY_IN_SECONDS ) );
 
 		$rows = self::query_net_sales( $cutoff_date );
 
-		// Filter for in-stock and up to limit.
+		// Filter for in-stock, published, visible, min_price and up to limit.
 		$items = array();
 		$ids   = array();
 
@@ -1459,25 +1524,22 @@ class Feed_Item {
 			if ( count( $ids ) >= $limit ) {
 				break;
 			}
-			$pid = (int) $r['product_id'];
-			$p   = wc_get_product( $pid );
-			if ( ! $p || ! $p->is_in_stock() || 'publish' !== $p->get_status() ) {
+			$pid   = (int) $r['product_id'];
+			$check = self::check_product_eligibility( $pid, $min_price, 1 );
+			if ( ! $check['eligible'] ) {
 				continue;
 			}
 
-			$img_id = $p->get_image_id();
-			$thumb  = $img_id ? wp_get_attachment_image_url( $img_id, 'thumbnail' ) : ( function_exists( 'wc_placeholder_img_src' ) ? wc_placeholder_img_src( 'thumbnail' ) : '' );
-
 			$items[] = array(
 				'id'              => $pid,
-				'name'            => $p->get_name(),
+				'name'            => $check['name'],
 				'source'          => 'Classique',
 				'sales'           => (int) $r['net_sales'],
 				'atc'             => 0,
 				'score'           => (float) $r['net_sales'],
-				'price'           => (float) $p->get_price(),
-				'stock'           => $p->managing_stock() ? $p->get_stock_quantity() : null,
-				'thumb'           => $thumb,
+				'price'           => (float) $check['price'],
+				'stock'           => $check['stock'],
+				'thumb'           => $check['thumb'],
 				'fallback_cat_id' => 0,
 				'fallback_cat'    => '',
 			);
@@ -1953,15 +2015,22 @@ class Feed_Item {
 			return false;
 		}
 
-		// In classic mode, historical behavior applies without variation-level filtering.
+		$min_price = isset( $options['label_trending_min_price'] ) ? max( 0.0, (float) $options['label_trending_min_price'] ) : 8.0;
+
+		// In classic mode, validate effective price.
 		if ( 'seasonal' !== $mode ) {
+			if ( $min_price > 0 ) {
+				$price = $product->get_price();
+				if ( '' === $price || null === $price || (float) $price < $min_price ) {
+					return false;
+				}
+			}
 			return true;
 		}
 
 		// In seasonal mode, when product is a variation, validate its own min stock and min price.
 		if ( $product->is_type( 'variation' ) || $parent ) {
 			$min_stock = isset( $options['label_trending_min_stock'] ) ? max( 1, (int) $options['label_trending_min_stock'] ) : 2;
-			$min_price = isset( $options['label_trending_min_price'] ) ? max( 0.0, (float) $options['label_trending_min_price'] ) : 8.0;
 
 			// 1. Stock check: variation stock if managed, else parent stock if managed, else unmanaged = OK.
 			if ( $product->managing_stock() ) {
@@ -1979,6 +2048,11 @@ class Feed_Item {
 			// 2. Effective price check on variation.
 			$v_price = $product->get_price();
 			if ( '' === $v_price || null === $v_price || (float) $v_price < $min_price ) {
+				return false;
+			}
+		} elseif ( $min_price > 0 ) {
+			$price = $product->get_price();
+			if ( '' === $price || null === $price || (float) $price < $min_price ) {
 				return false;
 			}
 		}
