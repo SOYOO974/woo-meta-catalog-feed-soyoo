@@ -1010,7 +1010,10 @@ class Feed_Item {
 		$excluded = apply_filters( 'woo_meta_catalog_trending_excluded_statuses', $default_excluded );
 		$all_excluded = array();
 		foreach ( (array) $excluded as $st ) {
-			$clean          = ltrim( (string) $st, 'wc-' );
+			$clean = (string) $st;
+			if ( 0 === strpos( $clean, 'wc-' ) ) {
+				$clean = substr( $clean, 3 );
+			}
 			$all_excluded[] = $clean;
 			$all_excluded[] = 'wc-' . $clean;
 		}

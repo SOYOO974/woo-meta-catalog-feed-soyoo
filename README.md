@@ -137,6 +137,10 @@ Consommé par `woo-fb-tracking-server-side` v2.1.0+ (mode « auto ») : `apply_f
 
 ## 📝 Changelog
 
+### 1.9.2
+- **Correctif bloquant sur le retrait du préfixe des statuts (`query_net_sales`)** : remplacement du découpage `ltrim( $st, 'wc-' )` (qui tronquait les statuts débutant par 'c' comme `cancelled` en `ancelled` ou `checkout-draft` en `heckout-draft`) par un test strict de préfixe `strpos( $clean, 'wc-' ) === 0`. Les commandes annulées et brouillons sont à nouveau rigoureusement exclues de l'agrégation des ventes.
+- **Préservation des réglages du mode inactif** : lors de l'enregistrement des réglages de l'extension, les champs du mode non sélectionné (qui sont désactivés dans le DOM pour éviter toute collision) ne sont plus écrasés par leurs valeurs par défaut codées en dur, mais fidèlement préservés depuis les réglages existants (`$existing`).
+
 ### 1.9.1
 - **Prise en compte des statuts de commande personnalisés** : remplacement de la liste blanche fixe (`completed`, `processing`) par une liste d'exclusion des commandes non payées/annulées (`pending`, `failed`, `cancelled`, `refunded`, `on-hold`, `checkout-draft`, `trash`, `auto-draft`). Intègre un nouveau filtre `woo_meta_catalog_trending_excluded_statuses`. Les commandes en cours de préparation, expédition ou retrait en boutique (ex: `preparing`, `shipping`, `pickup` sur KidShow.fr) sont désormais comptabilisées à 100 %.
 - **Champ N dédié pour le mode saisonnier** : séparation de `label_trending_seasonal_count` (défaut 60) et `label_trending_count` (défaut 35, mode classique), éliminant tout écrasement accidentel. Les champs du mode inactif sont automatiquement désactivés (`disabled`) dans l'interface d'administration.

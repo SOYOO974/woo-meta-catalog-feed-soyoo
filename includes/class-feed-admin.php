@@ -585,6 +585,47 @@ class Feed_Admin {
 			return;
 		}
 
+		$existing       = get_option( 'woo_meta_catalog_settings', array() );
+		$submitted_mode = isset( $_POST['label_trending_mode'] ) && 'seasonal' === $_POST['label_trending_mode'] ? 'seasonal' : 'classic';
+
+		if ( 'seasonal' === $submitted_mode ) {
+			// Mode saisonnier actif : champs saisonniers lus depuis $_POST, champs classiques préservés depuis $existing.
+			$trending_count                 = isset( $existing['label_trending_count'] ) ? max( 1, intval( $existing['label_trending_count'] ) ) : 35;
+			$trending_days                  = isset( $existing['label_trending_days'] ) ? max( 1, intval( $existing['label_trending_days'] ) ) : 45;
+			$trending_seasonal_count        = max( 1, intval( $_POST['label_trending_seasonal_count'] ?? ( $existing['label_trending_seasonal_count'] ?? 60 ) ) );
+			$trending_recent_ratio          = max( 0.0, min( 100.0, floatval( $_POST['label_trending_recent_ratio'] ?? ( $existing['label_trending_recent_ratio'] ?? 60.0 ) ) ) );
+			$trending_recent_days           = max( 1, intval( $_POST['label_trending_recent_days'] ?? ( $existing['label_trending_recent_days'] ?? 15 ) ) );
+			$trending_enable_atc            = isset( $_POST['label_trending_enable_atc'] ) ? 1 : 0;
+			$trending_atc_weight            = max( 0.0, floatval( $_POST['label_trending_atc_weight'] ?? ( $existing['label_trending_atc_weight'] ?? 0.3 ) ) );
+			$trending_min_sales             = max( 1, intval( $_POST['label_trending_min_sales'] ?? ( $existing['label_trending_min_sales'] ?? 2 ) ) );
+			$trending_min_atc               = max( 1, intval( $_POST['label_trending_min_atc'] ?? ( $existing['label_trending_min_atc'] ?? 3 ) ) );
+			$trending_prev_year_days_before = max( 0, intval( $_POST['label_trending_prev_year_days_before'] ?? ( $existing['label_trending_prev_year_days_before'] ?? 5 ) ) );
+			$trending_prev_year_days_after  = max( 0, intval( $_POST['label_trending_prev_year_days_after'] ?? ( $existing['label_trending_prev_year_days_after'] ?? 25 ) ) );
+			$trending_enable_cat_fallback   = isset( $_POST['label_trending_enable_cat_fallback'] ) ? 1 : 0;
+			$trending_cat_fallback_cap      = max( 0.0, min( 100.0, floatval( $_POST['label_trending_cat_fallback_cap'] ?? ( $existing['label_trending_cat_fallback_cap'] ?? 15.0 ) ) ) );
+			$trending_cat_fallback_excluded = isset( $_POST['label_trending_cat_fallback_excluded'] ) && is_array( $_POST['label_trending_cat_fallback_excluded'] ) ? array_map( 'intval', $_POST['label_trending_cat_fallback_excluded'] ) : array();
+			$trending_min_price             = max( 0.0, floatval( $_POST['label_trending_min_price'] ?? ( $existing['label_trending_min_price'] ?? 8.0 ) ) );
+			$trending_min_stock             = max( 1, intval( $_POST['label_trending_min_stock'] ?? ( $existing['label_trending_min_stock'] ?? 2 ) ) );
+		} else {
+			// Mode classique actif : champs classiques lus depuis $_POST, champs saisonniers préservés depuis $existing.
+			$trending_count                 = max( 1, intval( $_POST['label_trending_count'] ?? ( $existing['label_trending_count'] ?? 35 ) ) );
+			$trending_days                  = max( 1, intval( $_POST['label_trending_days'] ?? ( $existing['label_trending_days'] ?? 45 ) ) );
+			$trending_seasonal_count        = isset( $existing['label_trending_seasonal_count'] ) ? max( 1, intval( $existing['label_trending_seasonal_count'] ) ) : 60;
+			$trending_recent_ratio          = isset( $existing['label_trending_recent_ratio'] ) ? max( 0.0, min( 100.0, floatval( $existing['label_trending_recent_ratio'] ) ) ) : 60.0;
+			$trending_recent_days           = isset( $existing['label_trending_recent_days'] ) ? max( 1, intval( $existing['label_trending_recent_days'] ) ) : 15;
+			$trending_enable_atc            = ! empty( $existing['label_trending_enable_atc'] ) ? 1 : 0;
+			$trending_atc_weight            = isset( $existing['label_trending_atc_weight'] ) ? max( 0.0, floatval( $existing['label_trending_atc_weight'] ) ) : 0.3;
+			$trending_min_sales             = isset( $existing['label_trending_min_sales'] ) ? max( 1, intval( $existing['label_trending_min_sales'] ) ) : 2;
+			$trending_min_atc               = isset( $existing['label_trending_min_atc'] ) ? max( 1, intval( $existing['label_trending_min_atc'] ) ) : 3;
+			$trending_prev_year_days_before = isset( $existing['label_trending_prev_year_days_before'] ) ? max( 0, intval( $existing['label_trending_prev_year_days_before'] ) ) : 5;
+			$trending_prev_year_days_after  = isset( $existing['label_trending_prev_year_days_after'] ) ? max( 0, intval( $existing['label_trending_prev_year_days_after'] ) ) : 25;
+			$trending_enable_cat_fallback   = isset( $existing['label_trending_enable_cat_fallback'] ) ? ( ! empty( $existing['label_trending_enable_cat_fallback'] ) ? 1 : 0 ) : 1;
+			$trending_cat_fallback_cap      = isset( $existing['label_trending_cat_fallback_cap'] ) ? max( 0.0, min( 100.0, floatval( $existing['label_trending_cat_fallback_cap'] ) ) ) : 15.0;
+			$trending_cat_fallback_excluded = isset( $existing['label_trending_cat_fallback_excluded'] ) && is_array( $existing['label_trending_cat_fallback_excluded'] ) ? array_map( 'intval', $existing['label_trending_cat_fallback_excluded'] ) : array();
+			$trending_min_price             = isset( $existing['label_trending_min_price'] ) ? max( 0.0, floatval( $existing['label_trending_min_price'] ) ) : 8.0;
+			$trending_min_stock             = isset( $existing['label_trending_min_stock'] ) ? max( 1, intval( $existing['label_trending_min_stock'] ) ) : 2;
+		}
+
 		$settings = array(
 			'id_format'               => isset( $_POST['id_format'] ) && in_array( $_POST['id_format'], array( 'id', 'sku' ), true ) ? sanitize_text_field( wp_unslash( $_POST['id_format'] ) ) : 'id',
 			'exclude_hidden'          => isset( $_POST['exclude_hidden'] ) ? 1 : 0,
@@ -622,24 +663,24 @@ class Feed_Admin {
 			'label_bestseller_value'   => max( 1, intval( $_POST['label_bestseller_count'] ?? ( $_POST['label_bestseller_value'] ?? 100 ) ) ),
 			'label_bestseller_tag'     => sanitize_text_field( wp_unslash( $_POST['label_bestseller_tag'] ?? 'bestseller' ) ),
 			'label_enable_trending'                => isset( $_POST['label_enable_trending'] ) ? 1 : 0,
-			'label_trending_mode'                  => isset( $_POST['label_trending_mode'] ) && 'seasonal' === $_POST['label_trending_mode'] ? 'seasonal' : 'classic',
-			'label_trending_count'                 => max( 1, intval( $_POST['label_trending_count'] ?? 35 ) ),
-			'label_trending_seasonal_count'        => max( 1, intval( $_POST['label_trending_seasonal_count'] ?? 60 ) ),
-			'label_trending_days'                  => max( 1, intval( $_POST['label_trending_days'] ?? 45 ) ),
+			'label_trending_mode'                  => $submitted_mode,
+			'label_trending_count'                 => $trending_count,
+			'label_trending_seasonal_count'        => $trending_seasonal_count,
+			'label_trending_days'                  => $trending_days,
 			'label_trending_tag'                   => sanitize_text_field( wp_unslash( $_POST['label_trending_tag'] ?? 'tendance' ) ),
-			'label_trending_recent_ratio'          => max( 0.0, min( 100.0, floatval( $_POST['label_trending_recent_ratio'] ?? 60.0 ) ) ),
-			'label_trending_recent_days'           => max( 1, intval( $_POST['label_trending_recent_days'] ?? 15 ) ),
-			'label_trending_enable_atc'            => isset( $_POST['label_trending_enable_atc'] ) ? 1 : 0,
-			'label_trending_atc_weight'            => max( 0.0, floatval( $_POST['label_trending_atc_weight'] ?? 0.3 ) ),
-			'label_trending_min_sales'             => max( 1, intval( $_POST['label_trending_min_sales'] ?? 2 ) ),
-			'label_trending_min_atc'               => max( 1, intval( $_POST['label_trending_min_atc'] ?? 3 ) ),
-			'label_trending_prev_year_days_before' => max( 0, intval( $_POST['label_trending_prev_year_days_before'] ?? 5 ) ),
-			'label_trending_prev_year_days_after'  => max( 0, intval( $_POST['label_trending_prev_year_days_after'] ?? 25 ) ),
-			'label_trending_enable_cat_fallback'   => isset( $_POST['label_trending_enable_cat_fallback'] ) ? 1 : 0,
-			'label_trending_cat_fallback_cap'      => max( 0.0, min( 100.0, floatval( $_POST['label_trending_cat_fallback_cap'] ?? 15.0 ) ) ),
-			'label_trending_cat_fallback_excluded' => isset( $_POST['label_trending_cat_fallback_excluded'] ) && is_array( $_POST['label_trending_cat_fallback_excluded'] ) ? array_map( 'intval', $_POST['label_trending_cat_fallback_excluded'] ) : array(),
-			'label_trending_min_price'             => max( 0.0, floatval( $_POST['label_trending_min_price'] ?? 8.0 ) ),
-			'label_trending_min_stock'             => max( 1, intval( $_POST['label_trending_min_stock'] ?? 2 ) ),
+			'label_trending_recent_ratio'          => $trending_recent_ratio,
+			'label_trending_recent_days'           => $trending_recent_days,
+			'label_trending_enable_atc'            => $trending_enable_atc,
+			'label_trending_atc_weight'            => $trending_atc_weight,
+			'label_trending_min_sales'             => $trending_min_sales,
+			'label_trending_min_atc'               => $trending_min_atc,
+			'label_trending_prev_year_days_before' => $trending_prev_year_days_before,
+			'label_trending_prev_year_days_after'  => $trending_prev_year_days_after,
+			'label_trending_enable_cat_fallback'   => $trending_enable_cat_fallback,
+			'label_trending_cat_fallback_cap'      => $trending_cat_fallback_cap,
+			'label_trending_cat_fallback_excluded' => $trending_cat_fallback_excluded,
+			'label_trending_min_price'             => $trending_min_price,
+			'label_trending_min_stock'             => $trending_min_stock,
 		);
 
 		update_option( 'woo_meta_catalog_settings', $settings );
