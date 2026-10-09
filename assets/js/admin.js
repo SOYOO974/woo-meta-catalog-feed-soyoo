@@ -111,6 +111,28 @@
 
 					$('#generation-progress-msg').text('Compilation de ' + totalProds + ' produits en ' + totalChunks + ' lots...');
 
+					function formatAjaxError(xhr, status, error, defaultMsg) {
+						var msg = '';
+						if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
+							msg = xhr.responseJSON.data.message;
+						} else if (xhr.responseText) {
+							if (xhr.responseText.indexOf('Allowed memory size') !== -1 || xhr.responseText.indexOf('Fatal error') !== -1) {
+								msg = 'Saturation de mémoire PHP (Fatal Error). Réduisez la taille des lots et consultez l\'onglet Diagnostic.';
+							} else if (xhr.responseText.indexOf('<title>504') !== -1 || xhr.status === 504) {
+								msg = 'Délai d\'attente serveur dépassé (Gateway Timeout 504). Réduisez la taille des lots.';
+							} else if (xhr.status === 500) {
+								msg = 'Erreur interne 500 du serveur PHP. Consultez l\'onglet Diagnostic pour voir l\'incident.';
+							} else {
+								msg = error || status || defaultMsg;
+							}
+						} else if (xhr.status === 500) {
+							msg = 'Erreur interne 500 du serveur PHP. Consultez l\'onglet Diagnostic pour voir l\'incident.';
+						} else {
+							msg = error || status || defaultMsg;
+						}
+						return msg;
+					}
+
 					// Step 2: Recursive chunk processor
 					function processChunk(step) {
 						var percent = Math.min(95, Math.max(5, Math.round((step / totalChunks) * 100)));
@@ -130,7 +152,9 @@
 							success: function(chunkRes) {
 								if (!chunkRes.success) {
 									stopLoading($btn);
-									alert(chunkRes.data && chunkRes.data.message ? chunkRes.data.message : 'Erreur sur le lot ' + (step + 1));
+									var errMsg = (chunkRes.data && chunkRes.data.message) ? chunkRes.data.message : ('Erreur sur le lot ' + (step + 1));
+									$('#generation-progress-msg').html('<span style="color:#dc2626; font-weight:600;">' + errMsg + '</span> — <a href="admin.php?page=woo-meta-catalog-feed&tab=diagnostic" style="color:#2563eb; text-decoration:underline;">Voir le Diagnostic</a>');
+									alert('Erreur sur le lot ' + (step + 1) + ' : ' + errMsg);
 									return;
 								}
 
@@ -143,7 +167,9 @@
 							},
 							error: function(xhr, status, error) {
 								stopLoading($btn);
-								alert('Erreur serveur lors du traitement du lot ' + (step + 1) + ' : ' + error);
+								var errMsg = formatAjaxError(xhr, status, error, 'Erreur serveur inconnue');
+								$('#generation-progress-msg').html('<span style="color:#dc2626; font-weight:600;">Erreur lot ' + (step + 1) + ' : ' + errMsg + '</span> — <a href="admin.php?page=woo-meta-catalog-feed&tab=diagnostic" style="color:#2563eb; text-decoration:underline;">Consulter le Diagnostic</a>');
+								alert('Erreur lors du traitement du lot ' + (step + 1) + ' :\n' + errMsg + '\n\nConsultez l\'onglet « Diagnostic & Santé » pour voir le détail des incidents.');
 							}
 						});
 					}
@@ -187,12 +213,16 @@
 										$('#generation-progress-wrap').fadeOut(500);
 									}, 4000);
 								} else {
-									alert(finRes.data && finRes.data.message ? finRes.data.message : 'Erreur lors de la finalisation.');
+									var errMsg = (finRes.data && finRes.data.message) ? finRes.data.message : 'Erreur lors de la finalisation.';
+									$('#generation-progress-msg').html('<span style="color:#dc2626; font-weight:600;">' + errMsg + '</span> — <a href="admin.php?page=woo-meta-catalog-feed&tab=diagnostic" style="color:#2563eb; text-decoration:underline;">Voir le Diagnostic</a>');
+									alert(errMsg);
 								}
 							},
 							error: function(xhr, status, error) {
 								stopLoading($btn);
-								alert('Erreur serveur lors de la finalisation : ' + error);
+								var errMsg = formatAjaxError(xhr, status, error, 'Erreur lors de la finalisation');
+								$('#generation-progress-msg').html('<span style="color:#dc2626; font-weight:600;">' + errMsg + '</span> — <a href="admin.php?page=woo-meta-catalog-feed&tab=diagnostic" style="color:#2563eb; text-decoration:underline;">Consulter le Diagnostic</a>');
+								alert('Erreur serveur lors de la finalisation : ' + errMsg);
 							}
 						});
 					}
@@ -202,7 +232,9 @@
 				},
 				error: function(xhr, status, error) {
 					stopLoading($btn);
-					alert('Erreur serveur lors de l\'initialisation : ' + error);
+					var errMsg = (xhr.status === 500) ? 'Erreur 500 (mémoire ou timeout)' : (error || status || 'Serveur indisponible');
+					$('#generation-progress-msg').html('<span style="color:#dc2626; font-weight:600;">Initialisation échouée : ' + errMsg + '</span>');
+					alert('Erreur serveur lors de l\'initialisation : ' + errMsg);
 				}
 			});
 		});
@@ -318,6 +350,139 @@
 				}
 			});
 		});
+
+		// 8. Run Diagnostic Express Live Sample Test (Dry Run)
+		$('#btn-run-diag-test').on('click', function(e) {
+			e.preventDefault();
+			var $btn     = $(this);
+			var $wrap    = $('#diag-test-results-placeholder');
+			var $spinner = $wrap.find('.diag-test-spinner');
+			var $output  = $wrap.find('.diag-test-output');
+
+			$btn.prop('disabled', true).addClass('loading');
+			$wrap.show();
+			$spinner.show();
+			$output.hide().empty();
+
+			$.ajax({
+				url: wooMetaCatalogVars.ajaxUrl,
+				type: 'POST',
+				dataType: 'json',
+				data: {
+					action: 'woo_meta_catalog_run_diagnostic_test',
+					security: wooMetaCatalogVars.nonce,
+					count: 5
+				},
+				success: function(response) {
+					$btn.prop('disabled', false).removeClass('loading');
+					$spinner.hide();
+
+					if (response.success && response.data) {
+						var d          = response.data;
+						var isSuccess  = d.success;
+						var alertClass = isSuccess ? 'diag-alert-success' : 'diag-alert-warning';
+						var iconClass  = isSuccess ? 'dashicons-yes-alt' : 'dashicons-warning';
+
+						var html = '<div class="diag-test-alert ' + alertClass + '">';
+						html += '<div class="alert-top">';
+						html += '<span class="dashicons ' + iconClass + '" style="font-size:22px; width:22px; height:22px; vertical-align:middle; margin-right:6px;"></span>';
+						html += '<strong>' + (d.message || 'Test terminé.') + '</strong>';
+						html += '</div>';
+
+						// Metrics grid
+						html += '<div class="diag-test-metrics-grid">';
+						html += '<div class="metric-pill"><span>Durée :</span> <strong>' + d.duration_ms + ' ms</strong></div>';
+						html += '<div class="metric-pill"><span>Produits traités :</span> <strong>' + d.products_tested + ' parents (' + d.variations_tested + ' var.)</strong></div>';
+						html += '<div class="metric-pill"><span>Delta RAM consommé :</span> <strong>+' + d.memory_delta + '</strong></div>';
+						html += '<div class="metric-pill"><span>Pic mémoire RAM :</span> <strong>' + d.memory_peak + '</strong></div>';
+						html += '</div>';
+
+						if (d.errors && d.errors.length > 0) {
+							html += '<div class="diag-test-errors-list">';
+							html += '<h5>Erreurs rencontrées sur le lot échantillon :</h5><ul>';
+							$.each(d.errors, function(i, err) {
+								html += '<li>' + err + '</li>';
+							});
+							html += '</ul></div>';
+						}
+
+						if (d.sample_xml) {
+							html += '<div class="diag-test-xml-preview">';
+							html += '<button type="button" class="button button-secondary button-small btn-toggle-xml" style="margin-top: 10px;">';
+							html += '<span class="dashicons dashicons-visibility" style="vertical-align: middle; margin-right: 2px;"></span> <span class="toggle-text">Inspecter le balisage XML échantillon</span>';
+							html += '</button>';
+							html += '<pre class="diag-xml-snippet" style="display: none; margin-top: 10px; max-height: 250px; overflow-y: auto; background: #0f172a; color: #f8fafc; padding: 12px; border-radius: 6px; font-size: 11px; font-family: monospace;"><code>' + escapeHtml(d.sample_xml) + '</code></pre>';
+							html += '</div>';
+						}
+
+						html += '</div>';
+						$output.html(html).slideDown(200);
+					} else {
+						var errMsg = (response.data && response.data.message) ? response.data.message : 'Erreur inconnue lors du test express.';
+						$output.html('<div class="diag-test-alert diag-alert-error"><span class="dashicons dashicons-dismiss" style="vertical-align:middle; margin-right:4px;"></span> ' + errMsg + '</div>').slideDown(200);
+					}
+				},
+				error: function(xhr, status, error) {
+					$btn.prop('disabled', false).removeClass('loading');
+					$spinner.hide();
+					var errMsg = (xhr.status === 500) ? 'Erreur 500 : saturation mémoire ou timeout serveur.' : (error || status || 'Serveur indisponible');
+					$output.html('<div class="diag-test-alert diag-alert-error"><span class="dashicons dashicons-dismiss" style="vertical-align:middle; margin-right:4px;"></span> Erreur serveur lors du test : ' + errMsg + '</div>').slideDown(200);
+				}
+			});
+		});
+
+		// Toggle XML snippet
+		$(document).on('click', '.btn-toggle-xml', function(e) {
+			e.preventDefault();
+			var $btn = $(this);
+			var $pre = $btn.siblings('.diag-xml-snippet');
+			$pre.slideToggle(200, function() {
+				if ($pre.is(':visible')) {
+					$btn.find('.toggle-text').text('Masquer l\'extrait XML');
+				} else {
+					$btn.find('.toggle-text').text('Inspecter le balisage XML échantillon');
+				}
+			});
+		});
+
+		// 9. Clear Diagnostic Error Logs
+		$(document).on('click', '#btn-clear-logs, .btn-clear-logs-secondary', function(e) {
+			e.preventDefault();
+			if (!confirm('Voulez-vous vraiment vider l\'historique des incidents de génération ?')) {
+				return;
+			}
+
+			var $btn = $(this);
+			$btn.prop('disabled', true);
+
+			$.ajax({
+				url: wooMetaCatalogVars.ajaxUrl,
+				type: 'POST',
+				dataType: 'json',
+				data: {
+					action: 'woo_meta_catalog_clear_logs',
+					security: wooMetaCatalogVars.nonce
+				},
+				success: function(response) {
+					$btn.prop('disabled', false);
+					if (response.success) {
+						$('#diag-log-count-val').text('0');
+						$('.diag-tab-badge').remove();
+						$('#btn-clear-logs').fadeOut(200);
+						$('#btn-clear-logs-header').fadeOut(200);
+						$('.diag-logs-wrapper').html('<div class="diag-empty-logs"><span class="dashicons dashicons-yes-alt"></span><h3>Journal des incidents vidé</h3><p>Le journal est désormais vierge. Aucune erreur n\'est enregistrée.</p></div>');
+					}
+				},
+				error: function() {
+					$btn.prop('disabled', false);
+					alert('Erreur lors de la suppression des logs.');
+				}
+			});
+		});
+
+		function escapeHtml(text) {
+			return $('<div>').text(text).html();
+		}
 
 		function stopLoading($btn) {
 			$btn.removeClass('loading').prop('disabled', false);

@@ -31,6 +31,8 @@ class Feed_Admin {
 		add_action( 'wp_ajax_woo_meta_catalog_check_status', array( $this, 'ajax_check_status' ) );
 		add_action( 'wp_ajax_woo_meta_catalog_reset_lock', array( $this, 'ajax_reset_lock' ) );
 		add_action( 'wp_ajax_woo_meta_catalog_test_cdn', array( $this, 'ajax_test_cdn' ) );
+		add_action( 'wp_ajax_woo_meta_catalog_run_diagnostic_test', array( $this, 'ajax_run_diagnostic_test' ) );
+		add_action( 'wp_ajax_woo_meta_catalog_clear_logs', array( $this, 'ajax_clear_logs' ) );
 		add_action( 'admin_init', array( $this, 'save_settings' ) );
 	}
 
@@ -344,6 +346,39 @@ class Feed_Admin {
 	}
 
 	/**
+	 * Handle AJAX run diagnostic sample test.
+	 */
+	public function ajax_run_diagnostic_test() {
+		check_ajax_referer( 'woo_meta_catalog_admin_nonce', 'security' );
+
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Droits insuffisants.', 'woo-meta-catalog' ) ) );
+		}
+
+		$result = Feed_Diagnostic::run_sample_test( 5 );
+
+		if ( ! empty( $result['success'] ) ) {
+			wp_send_json_success( $result );
+		} else {
+			wp_send_json_error( $result );
+		}
+	}
+
+	/**
+	 * Handle AJAX clear error logs.
+	 */
+	public function ajax_clear_logs() {
+		check_ajax_referer( 'woo_meta_catalog_admin_nonce', 'security' );
+
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Droits insuffisants.', 'woo-meta-catalog' ) ) );
+		}
+
+		Feed_Logger::clear_logs();
+		wp_send_json_success( array( 'message' => __( 'Journal des incidents vidé avec succès.', 'woo-meta-catalog' ) ) );
+	}
+
+	/**
 	 * Save plugin settings.
 	 */
 	public function save_settings() {
@@ -376,7 +411,7 @@ class Feed_Admin {
 			'utm_campaign'            => sanitize_text_field( wp_unslash( $_POST['utm_campaign'] ?? 'meta_feed' ) ),
 			'enable_security_key'     => isset( $_POST['enable_security_key'] ) ? 1 : 0,
 			'security_key'            => sanitize_text_field( wp_unslash( $_POST['security_key'] ?? '' ) ),
-			'batch_size'              => max( 50, min( 1000, intval( $_POST['batch_size'] ?? 200 ) ) ),
+			'batch_size'              => max( 10, min( 500, intval( $_POST['batch_size'] ?? 50 ) ) ),
 			'daily_time'              => sanitize_text_field( wp_unslash( $_POST['daily_time'] ?? '03:30' ) ),
 
 			// Meta internal labels settings.
@@ -459,6 +494,28 @@ class Feed_Admin {
 			<div class="woo-meta-catalog-notices">
 				<?php settings_errors( 'woo_meta_catalog_messages' ); ?>
 			</div>
+
+			<?php
+			$active_tab  = isset( $_GET['tab'] ) ? sanitize_key( $_GET['tab'] ) : 'settings';
+			$error_count = Feed_Logger::get_count();
+			?>
+			<nav class="nav-tab-wrapper woo-meta-nav-tabs" style="margin-bottom: 20px;">
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=woo-meta-catalog-feed' ) ); ?>" class="nav-tab <?php echo 'settings' === $active_tab ? 'nav-tab-active' : ''; ?>">
+					<span class="dashicons dashicons-admin-generic" style="margin-right: 4px;"></span>
+					<?php esc_html_e( 'Génération & Réglages', 'woo-meta-catalog' ); ?>
+				</a>
+				<a href="<?php echo esc_url( admin_url( 'admin.php?page=woo-meta-catalog-feed&tab=diagnostic' ) ); ?>" class="nav-tab <?php echo 'diagnostic' === $active_tab ? 'nav-tab-active' : ''; ?>">
+					<span class="dashicons dashicons-heart" style="margin-right: 4px;"></span>
+					<?php esc_html_e( 'Diagnostic & Santé', 'woo-meta-catalog' ); ?>
+					<?php if ( $error_count > 0 ) : ?>
+						<span class="diag-tab-badge"><?php echo esc_html( $error_count ); ?></span>
+					<?php endif; ?>
+				</a>
+			</nav>
+
+			<?php if ( 'diagnostic' === $active_tab ) : ?>
+				<?php $this->render_diagnostic_tab(); ?>
+			<?php else : ?>
 
 			<?php if ( ! $exists ) : ?>
 				<div class="notice notice-warning inline woo-meta-empty-feed-notice" style="margin: 15px 0 20px; padding: 14px 18px; border-left: 4px solid #f59e0b; background: #fffbeb; border-radius: 4px;">
@@ -999,8 +1056,8 @@ class Feed_Admin {
 							<tr>
 								<th scope="row"><label for="batch_size"><?php esc_html_e( 'Taille des lots (Batch Chunk Size)', 'woo-meta-catalog' ); ?></label></th>
 								<td>
-									<input name="batch_size" type="number" step="50" min="50" max="1000" id="batch_size" value="<?php echo esc_attr( $options['batch_size'] ?? 200 ); ?>" class="small-text" />
-									<p class="description"><?php esc_html_e( 'Nombre de produits traités par lot asynchrone (défaut : 200). Permet de contourner les limites de mémoire et de temps d\'exécution des hébergeurs de haute performance comme Rocket.net.', 'woo-meta-catalog' ); ?></p>
+									<input name="batch_size" type="number" step="10" min="10" max="500" id="batch_size" value="<?php echo esc_attr( $options['batch_size'] ?? 50 ); ?>" class="small-text" />
+									<p class="description"><?php esc_html_e( 'Nombre de produits traités par lot asynchrone (défaut : 50). Recommandé à 50 pour éviter la saturation de mémoire vive PHP sur les boutiques avec beaucoup de variations.', 'woo-meta-catalog' ); ?></p>
 								</td>
 							</tr>
 						</tbody>
@@ -1022,6 +1079,7 @@ class Feed_Admin {
 					<li><?php esc_html_e( 'Validez l\'importation : Meta analysera et synchronisera tous vos produits simples et déclinaisons avec les identifiants stricts CAPI.', 'woo-meta-catalog' ); ?></li>
 				</ol>
 			</div>
+			<?php endif; ?>
 		</div>
 		<?php
 	}
@@ -1119,4 +1177,254 @@ class Feed_Admin {
 		</div>
 		<?php
 	}
+
+	/**
+	 * Render the Diagnostic & Health tab.
+	 */
+	public function render_diagnostic_tab() {
+		$diagnostic_data = Feed_Diagnostic::get_health_status();
+		$summary         = $diagnostic_data['summary'];
+		$checks          = $diagnostic_data['checks'];
+		$logs            = Feed_Logger::get_logs( 50 );
+		$log_count       = count( $logs );
+		$mem_limit       = ini_get( 'memory_limit' );
+		$max_time        = (int) ini_get( 'max_execution_time' );
+		?>
+		<div class="woo-meta-diagnostic-container">
+			<!-- TOP METRICS / SUMMARY CARDS -->
+			<div class="woo-meta-diag-summary-grid">
+				<div class="diag-summary-card <?php echo $summary['errors'] > 0 ? 'is-error' : ( $summary['warnings'] > 0 ? 'is-warning' : 'is-ok' ); ?>">
+					<div class="card-icon">
+						<?php if ( $summary['errors'] > 0 ) : ?>
+							<span class="dashicons dashicons-dismiss"></span>
+						<?php elseif ( $summary['warnings'] > 0 ) : ?>
+							<span class="dashicons dashicons-warning"></span>
+						<?php else : ?>
+							<span class="dashicons dashicons-yes-alt"></span>
+						<?php endif; ?>
+					</div>
+					<div class="card-text">
+						<h4><?php esc_html_e( 'Santé Globale', 'woo-meta-catalog' ); ?></h4>
+						<span class="value">
+							<?php
+							if ( $summary['errors'] > 0 ) {
+								echo esc_html( sprintf( _n( '%d Problème détecté', '%d Problèmes détectés', $summary['errors'], 'woo-meta-catalog' ), $summary['errors'] ) );
+							} elseif ( $summary['warnings'] > 0 ) {
+								echo esc_html( sprintf( _n( '%d Avertissement', '%d Avertissements', $summary['warnings'], 'woo-meta-catalog' ), $summary['warnings'] ) );
+							} else {
+								esc_html_e( 'Tous les voyants sont au vert', 'woo-meta-catalog' );
+							}
+							?>
+						</span>
+						<p class="sub"><?php echo esc_html( sprintf( __( '%1$d vérifications : %2$d valides, %3$d avertissements, %4$d erreurs', 'woo-meta-catalog' ), count( $checks ), $summary['ok'], $summary['warnings'], $summary['errors'] ) ); ?></p>
+					</div>
+				</div>
+
+				<div class="diag-summary-card <?php echo $log_count > 0 ? 'is-warning' : 'is-neutral'; ?>">
+					<div class="card-icon">
+						<span class="dashicons dashicons-warning"></span>
+					</div>
+					<div class="card-text">
+						<h4><?php esc_html_e( 'Incidents Enregistrés', 'woo-meta-catalog' ); ?></h4>
+						<span class="value" id="diag-log-count-val"><?php echo (int) $log_count; ?></span>
+						<p class="sub"><?php esc_html_e( 'Erreurs & avertissements de génération', 'woo-meta-catalog' ); ?></p>
+					</div>
+					<?php if ( $log_count > 0 ) : ?>
+						<button type="button" class="button button-small btn-clear-logs-secondary" id="btn-clear-logs-header">
+							<?php esc_html_e( 'Vider', 'woo-meta-catalog' ); ?>
+						</button>
+					<?php endif; ?>
+				</div>
+
+				<div class="diag-summary-card is-neutral">
+					<div class="card-icon">
+						<span class="dashicons dashicons-performance"></span>
+					</div>
+					<div class="card-text">
+						<h4><?php esc_html_e( 'Ressources PHP', 'woo-meta-catalog' ); ?></h4>
+						<span class="value"><?php echo esc_html( $mem_limit ); ?></span>
+						<p class="sub"><?php echo esc_html( sprintf( __( 'PHP %1$s | Délai max : %2$s', 'woo-meta-catalog' ), PHP_VERSION, ( $max_time > 0 ? $max_time . 's' : '0s' ) ) ); ?></p>
+					</div>
+				</div>
+			</div>
+
+			<!-- LIVE SAMPLE TEST CARD (EXPRESS DRY-RUN) -->
+			<div class="woo-meta-diag-test-card">
+				<div class="card-header">
+					<div class="title-wrap">
+						<h3><span class="dashicons dashicons-dashboard"></span> <?php esc_html_e( 'Test de génération express (Dry-Run 5 produits)', 'woo-meta-catalog' ); ?></h3>
+						<p class="desc"><?php esc_html_e( 'Simule la génération XML en mémoire vive sur 5 produits récents pour mesurer la durée d\'exécution, le delta de consommation RAM et vérifier la conformité du balisage.', 'woo-meta-catalog' ); ?></p>
+					</div>
+					<div class="action-wrap">
+						<button type="button" class="button button-primary button-large" id="btn-run-diag-test">
+							<span class="dashicons dashicons-controls-play"></span>
+							<span class="btn-text"><?php esc_html_e( 'Lancer le test express', 'woo-meta-catalog' ); ?></span>
+						</button>
+					</div>
+				</div>
+
+				<div id="diag-test-results-placeholder" class="diag-test-results" style="display: none;">
+					<div class="diag-test-spinner" style="display: none; padding: 20px 0; text-align: center;">
+						<span class="spinner is-active" style="float: none; margin: 0 8px 0 0; vertical-align: middle;"></span>
+						<span style="font-weight: 600; color: #475569;"><?php esc_html_e( 'Compilation test en cours dans la mémoire PHP...', 'woo-meta-catalog' ); ?></span>
+					</div>
+					<div class="diag-test-output" style="display: none;">
+						<!-- Injected dynamically via JS -->
+					</div>
+				</div>
+			</div>
+
+			<!-- AUTOMATED HEALTH CHECKS -->
+			<div class="woo-meta-diag-section">
+				<div class="section-title">
+					<h2><span class="dashicons dashicons-shield"></span> <?php esc_html_e( 'Vérifications automatiques du système', 'woo-meta-catalog' ); ?></h2>
+					<p class="description"><?php esc_html_e( 'Audit complet de l\'environnement d\'exécution, de la compatibilité du serveur et de l\'intégrité des composants du flux.', 'woo-meta-catalog' ); ?></p>
+				</div>
+
+				<div class="diag-checks-grid">
+					<?php foreach ( $checks as $check_key => $check ) :
+						$c_status    = $check['status'] ?? 'ok';
+						$icon_class  = 'dashicons-yes-alt';
+						$badge_class = 'diag-badge-ok';
+						if ( 'warning' === $c_status ) {
+							$icon_class  = 'dashicons-warning';
+							$badge_class = 'diag-badge-warn';
+						} elseif ( 'error' === $c_status ) {
+							$icon_class  = 'dashicons-dismiss';
+							$badge_class = 'diag-badge-err';
+						} elseif ( 'info' === $c_status ) {
+							$icon_class  = 'dashicons-info';
+							$badge_class = 'diag-badge-info';
+						}
+						?>
+						<div class="diag-check-card <?php echo esc_attr( 'status-' . $c_status ); ?>">
+							<div class="check-header">
+								<div class="check-title">
+									<span class="dashicons <?php echo esc_attr( $icon_class ); ?>"></span>
+									<strong><?php echo esc_html( $check['title'] ); ?></strong>
+								</div>
+								<span class="diag-badge <?php echo esc_attr( $badge_class ); ?>"><?php echo esc_html( $check['badge'] ); ?></span>
+							</div>
+
+							<?php if ( ! empty( $check['notes'] ) ) : ?>
+								<div class="check-notes">
+									<?php foreach ( $check['notes'] as $note ) : ?>
+										<div class="note-item <?php echo esc_attr( 'note-' . $c_status ); ?>">
+											<span class="dashicons dashicons-arrow-right-alt2"></span>
+											<?php echo esc_html( $note ); ?>
+										</div>
+									<?php endforeach; ?>
+								</div>
+							<?php endif; ?>
+
+							<div class="check-details">
+								<table class="diag-details-table">
+									<tbody>
+										<?php foreach ( $check['details'] as $label => $val ) : ?>
+											<tr>
+												<td class="dt-label"><?php echo esc_html( $label ); ?></td>
+												<td class="dt-val"><code><?php echo esc_html( (string) $val ); ?></code></td>
+											</tr>
+										<?php endforeach; ?>
+									</tbody>
+								</table>
+							</div>
+						</div>
+					<?php endforeach; ?>
+				</div>
+			</div>
+
+			<!-- INCIDENT & ERROR LOGS TABLE -->
+			<div class="woo-meta-diag-section" id="diag-logs-section">
+				<div class="section-title logs-header-bar">
+					<div>
+						<h2><span class="dashicons dashicons-format-aside"></span> <?php esc_html_e( 'Journal des incidents de génération', 'woo-meta-catalog' ); ?></h2>
+						<p class="description"><?php esc_html_e( 'Historique des 50 dernières erreurs, avertissements ou exceptions interceptées lors des générations manuelles ou automatiques.', 'woo-meta-catalog' ); ?></p>
+					</div>
+					<?php if ( ! empty( $logs ) ) : ?>
+						<button type="button" class="button button-secondary" id="btn-clear-logs">
+							<span class="dashicons dashicons-trash"></span>
+							<?php esc_html_e( 'Vider le journal', 'woo-meta-catalog' ); ?>
+						</button>
+					<?php endif; ?>
+				</div>
+
+				<div class="diag-logs-wrapper">
+					<?php if ( empty( $logs ) ) : ?>
+						<div class="diag-empty-logs">
+							<span class="dashicons dashicons-yes-alt"></span>
+							<h3><?php esc_html_e( 'Aucun incident enregistré', 'woo-meta-catalog' ); ?></h3>
+							<p><?php esc_html_e( 'Le journal est vierge. Aucune exception PHP ni erreur de traitement n\'a été capturée récemment.', 'woo-meta-catalog' ); ?></p>
+						</div>
+					<?php else : ?>
+						<table class="widefat striped diag-logs-table" id="diag-logs-table">
+							<thead>
+								<tr>
+									<th style="width: 140px;"><?php esc_html_e( 'Date & Heure', 'woo-meta-catalog' ); ?></th>
+									<th style="width: 90px;"><?php esc_html_e( 'Niveau', 'woo-meta-catalog' ); ?></th>
+									<th><?php esc_html_e( 'Message d\'erreur', 'woo-meta-catalog' ); ?></th>
+									<th style="width: 130px;"><?php esc_html_e( 'Mémoire RAM', 'woo-meta-catalog' ); ?></th>
+									<th style="width: 180px;"><?php esc_html_e( 'Contexte', 'woo-meta-catalog' ); ?></th>
+								</tr>
+							</thead>
+							<tbody>
+								<?php foreach ( $logs as $log ) :
+									$level     = $log['level'] ?? 'error';
+									$lvl_class = 'lvl-' . $level;
+									?>
+									<tr>
+										<td class="log-date">
+											<strong><?php echo esc_html( date_i18n( 'd/m/Y', strtotime( $log['date'] ) ) ); ?></strong><br />
+											<span class="time-sub"><?php echo esc_html( date_i18n( 'H:i:s', strtotime( $log['date'] ) ) ); ?></span>
+										</td>
+										<td class="log-level">
+											<span class="badge-log-lvl <?php echo esc_attr( $lvl_class ); ?>"><?php echo esc_html( strtoupper( $level ) ); ?></span>
+										</td>
+										<td class="log-msg">
+											<strong><?php echo esc_html( $log['message'] ); ?></strong>
+											<?php if ( ! empty( $log['context']['file'] ) ) : ?>
+												<div class="log-file-loc">
+													<code><?php echo esc_html( $log['context']['file'] ); ?></code>
+												</div>
+											<?php endif; ?>
+										</td>
+										<td class="log-mem">
+											<span title="<?php esc_attr_e( 'Usage au moment de l\'erreur / Pic', 'woo-meta-catalog' ); ?>">
+												<?php echo esc_html( $log['memory'] ); ?> / <small><?php echo esc_html( $log['memory_peak'] ); ?></small>
+											</span>
+										</td>
+										<td class="log-ctx">
+											<?php
+											if ( ! empty( $log['context'] ) ) {
+												$ctx_items = array();
+												if ( isset( $log['context']['step'] ) ) {
+													$ctx_items[] = 'Lot: ' . $log['context']['step'];
+												}
+												if ( ! empty( $log['context']['product_id'] ) ) {
+													$ctx_items[] = 'ID: #' . $log['context']['product_id'];
+												}
+												if ( ! empty( $log['context']['run_id'] ) ) {
+													$ctx_items[] = 'Run: ' . substr( $log['context']['run_id'], -6 );
+												}
+												if ( ! empty( $ctx_items ) ) {
+													echo '<span class="log-ctx-pill">' . esc_html( implode( ' | ', $ctx_items ) ) . '</span>';
+												} else {
+													echo '<code>' . esc_html( wp_json_encode( $log['context'] ) ) . '</code>';
+												}
+											} else {
+												echo '-';
+											}
+											?>
+										</td>
+									</tr>
+								<?php endforeach; ?>
+							</tbody>
+						</table>
+					<?php endif; ?>
+				</div>
+			</div>
+		</div>
+		<?php
+	}
 }
+

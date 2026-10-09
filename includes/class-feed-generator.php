@@ -207,12 +207,20 @@ class Feed_Generator {
 		$header .= "\t\t<description><![CDATA[" . Feed_Item::sanitize_cdata( $store_desc ) . "]]></description>\n";
 		$header .= "\t\t<lastBuildDate>" . $date_rfc . "</lastBuildDate>\n";
 
+		if ( function_exists( 'wc_set_time_limit' ) ) {
+			wc_set_time_limit( 120 );
+		}
+		$mem_limit = ini_get( 'memory_limit' );
+		if ( $mem_limit && (int) $mem_limit < 512 ) {
+			@ini_set( 'memory_limit', '512M' );
+		}
+
 		fwrite( $handle, $header );
 		fclose( $handle );
 
-		// 4. Chunk products into batches.
+		// 4. Chunk products into batches (default 50 for safety with variations and Redis).
 		$options    = get_option( 'woo_meta_catalog_settings', array() );
-		$batch_size = ! empty( $options['batch_size'] ) ? max( 50, (int) $options['batch_size'] ) : 200;
+		$batch_size = ! empty( $options['batch_size'] ) ? max( 10, min( 200, (int) $options['batch_size'] ) ) : 50;
 		$chunks     = array_chunk( $product_ids, $batch_size );
 
 		$job_state = array(
@@ -323,62 +331,114 @@ class Feed_Generator {
 			);
 		}
 
+		if ( function_exists( 'wc_set_time_limit' ) ) {
+			wc_set_time_limit( 120 );
+		}
+		$mem_limit = ini_get( 'memory_limit' );
+		if ( $mem_limit && (int) $mem_limit < 512 ) {
+			@ini_set( 'memory_limit', '512M' );
+		}
+
 		$options        = get_option( 'woo_meta_catalog_settings', array() );
 		$exclude_hidden = isset( $options['exclude_hidden'] ) ? ! empty( $options['exclude_hidden'] ) : true;
 		$product_ids    = $chunks[ $step ];
 		$items_written  = 0;
+		$loop_counter   = 0;
 
 		foreach ( $product_ids as $pid ) {
-			$product = wc_get_product( $pid );
-			if ( ! $product || ! is_a( $product, '\WC_Product' ) ) {
-				continue;
-			}
+			$loop_counter++;
+			try {
+				$product = wc_get_product( $pid );
+				if ( ! $product || ! is_a( $product, '\WC_Product' ) ) {
+					continue;
+				}
 
-			// Fast skip if product is hidden in WooCommerce catalog.
-			if ( $exclude_hidden && 'hidden' === $product->get_catalog_visibility() ) {
-				wp_cache_delete( $pid, 'posts' );
-				wp_cache_delete( $pid, 'post_meta' );
-				clean_post_cache( $pid );
-				unset( $product );
-				continue;
-			}
+				// Fast skip if product is hidden in WooCommerce catalog.
+				if ( $exclude_hidden && 'hidden' === $product->get_catalog_visibility() ) {
+					unset( $product );
+					continue;
+				}
 
-			// If variable product, export its individual variations.
-			if ( $product->is_type( 'variable' ) ) {
-				$children_ids = $product->get_children();
-				if ( ! empty( $children_ids ) ) {
-					foreach ( $children_ids as $child_id ) {
-						$variation = wc_get_product( $child_id );
-						if ( $variation && is_a( $variation, '\WC_Product_Variation' ) ) {
-							$xml_item = Feed_Item::build( $variation, $product, $options );
-							if ( ! empty( $xml_item ) ) {
-								fwrite( $handle, $xml_item );
-								$items_written++;
+				// If variable product, export its individual variations.
+				if ( $product->is_type( 'variable' ) ) {
+					$children_ids = $product->get_children();
+					if ( ! empty( $children_ids ) ) {
+						foreach ( $children_ids as $child_id ) {
+							try {
+								$variation = wc_get_product( $child_id );
+								if ( $variation && is_a( $variation, '\WC_Product_Variation' ) ) {
+									$xml_item = Feed_Item::build( $variation, $product, $options );
+									if ( ! empty( $xml_item ) ) {
+										fwrite( $handle, $xml_item );
+										$items_written++;
+									}
+									unset( $variation );
+								}
+							} catch ( \Throwable $ve ) {
+								Feed_Logger::log(
+									sprintf( 'Erreur lors du traitement de la déclinaison #%d (Parent #%d) : %s', $child_id, $pid, $ve->getMessage() ),
+									'warning',
+									array(
+										'run_id'       => $run_id,
+										'step'         => $step,
+										'product_id'   => $pid,
+										'variation_id' => $child_id,
+									)
+								);
 							}
-							unset( $variation );
 						}
+						unset( $children_ids );
+					}
+				} else {
+					// Standard product (simple, external, grouped).
+					$xml_item = Feed_Item::build( $product, null, $options );
+					if ( ! empty( $xml_item ) ) {
+						fwrite( $handle, $xml_item );
+						$items_written++;
 					}
 				}
-			} else {
-				// Standard product (simple, external, grouped).
-				$xml_item = Feed_Item::build( $product, null, $options );
-				if ( ! empty( $xml_item ) ) {
-					fwrite( $handle, $xml_item );
-					$items_written++;
-				}
+
+				unset( $product );
+			} catch ( \Throwable $pe ) {
+				Feed_Logger::log(
+					sprintf( 'Erreur lors du traitement du produit #%d : %s', $pid, $pe->getMessage() ),
+					'error',
+					array(
+						'run_id'     => $run_id,
+						'step'       => $step,
+						'product_id' => $pid,
+					)
+				);
 			}
 
-			// Free memory cache for this product.
-			wp_cache_delete( $pid, 'posts' );
-			wp_cache_delete( $pid, 'post_meta' );
-			clean_post_cache( $pid );
-			unset( $product );
+			// Clean runtime memory cache periodically without invalidating persistent Redis cache.
+			if ( 0 === $loop_counter % 5 ) {
+				if ( function_exists( 'wp_cache_flush_runtime' ) ) {
+					wp_cache_flush_runtime();
+				}
+				if ( function_exists( 'wc_get_container' ) && class_exists( '\Automattic\WooCommerce\Internal\Caches\ProductCache' ) ) {
+					try {
+						$pc = wc_get_container()->get( \Automattic\WooCommerce\Internal\Caches\ProductCache::class );
+						if ( $pc && method_exists( $pc, 'flush' ) ) {
+							$pc->flush();
+						}
+					} catch ( \Throwable $t ) {
+						// Ignore container lookup failure.
+					}
+				}
+				if ( function_exists( 'gc_collect_cycles' ) ) {
+					gc_collect_cycles();
+				}
+			}
 		}
 
 		fclose( $handle );
 
 		Feed_Item::reset_sales_cache();
 
+		if ( function_exists( 'wp_cache_flush_runtime' ) ) {
+			wp_cache_flush_runtime();
+		}
 		if ( function_exists( 'gc_collect_cycles' ) ) {
 			gc_collect_cycles();
 		}
@@ -521,6 +581,17 @@ class Feed_Generator {
 		// Trigger hook for external caches (WP Agent Bridge, Cloudflare, etc.).
 		do_action( 'woo_meta_catalog_feed_generated', $final_file, $total_item, $duration );
 
+		Feed_Logger::log(
+			sprintf( 'Flux XML généré avec succès : %1$d items compilés en %2$s s (%3$s)', $total_item, $duration, size_format( $file_size, 2 ) ),
+			'info',
+			array(
+				'run_id'      => $run_id,
+				'total_items' => $total_item,
+				'duration'    => $duration,
+				'file_size'   => $file_size,
+			)
+		);
+
 		return $feed_status;
 	}
 
@@ -531,6 +602,12 @@ class Feed_Generator {
 	 * @param string $error_message Error message.
 	 */
 	public function fail_job( $run_id, $error_message ) {
+		Feed_Logger::log(
+			$error_message,
+			'critical',
+			array( 'run_id' => $run_id )
+		);
+
 		$feed_status = array(
 			'status'        => 'failed',
 			'run_id'        => $run_id,
