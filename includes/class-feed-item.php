@@ -477,6 +477,13 @@ class Feed_Item {
 	protected static $trending_ids_cache = null;
 
 	/**
+	 * Cache for new product IDs lookup map.
+	 *
+	 * @var array<int, bool>|null
+	 */
+	protected static $new_product_ids_cache = null;
+
+	/**
 	 * Check if WooCommerce Analytics order lookup table exists.
 	 *
 	 * @return bool
@@ -594,12 +601,13 @@ class Feed_Item {
 	}
 
 	/**
-	 * Reset sales timestamp, bestseller and trending cache.
+	 * Reset sales timestamp, bestseller, trending and new products cache.
 	 */
 	public static function reset_sales_cache() {
 		self::$sales_timestamp_cache = array();
 		self::$bestseller_ids_cache   = null;
 		self::$trending_ids_cache     = null;
+		self::$new_product_ids_cache  = null;
 	}
 
 	/**
@@ -641,30 +649,97 @@ class Feed_Item {
 	}
 
 	/**
-	 * Check if a product or variation was created recently.
+	 * Retrieve top newest in-stock product IDs mapped as [ ID => true ].
+	 *
+	 * @param array $options Plugin settings.
+	 * @return array<int, bool> Map of new product IDs.
+	 */
+	public static function get_new_product_ids( $options = array() ) {
+		if ( null !== self::$new_product_ids_cache ) {
+			return self::$new_product_ids_cache;
+		}
+
+		global $wpdb;
+		$limit = ! empty( $options['label_new_count'] ) ? max( 1, (int) $options['label_new_count'] ) : 50;
+		$days  = ! empty( $options['label_new_days'] ) ? max( 1, (int) $options['label_new_days'] ) : 30;
+
+		$cutoff_date = gmdate( 'Y-m-d H:i:s', current_time( 'timestamp' ) - ( $days * DAY_IN_SECONDS ) );
+
+		$lookup_table = $wpdb->prefix . 'wc_product_meta_lookup';
+		$has_lookup   = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $lookup_table ) ) === $lookup_table );
+
+		if ( $has_lookup ) {
+			$sql = $wpdb->prepare(
+				"SELECT p.ID FROM {$wpdb->posts} p
+				 INNER JOIN {$lookup_table} meta ON p.ID = meta.product_id
+				 WHERE p.post_type = 'product'
+				   AND p.post_status = 'publish'
+				   AND p.post_date_gmt >= %s
+				   AND meta.stock_status = 'instock'
+				 ORDER BY p.post_date_gmt DESC
+				 LIMIT %d",
+				$cutoff_date,
+				$limit
+			);
+			$ids = $wpdb->get_col( $sql );
+		} else {
+			$sql = $wpdb->prepare(
+				"SELECT p.ID FROM {$wpdb->posts} p
+				 INNER JOIN {$wpdb->postmeta} pm_stock ON p.ID = pm_stock.post_id AND pm_stock.meta_key = '_stock_status'
+				 WHERE p.post_type = 'product'
+				   AND p.post_status = 'publish'
+				   AND p.post_date_gmt >= %s
+				   AND pm_stock.meta_value = 'instock'
+				 ORDER BY p.post_date_gmt DESC
+				 LIMIT %d",
+				$cutoff_date,
+				$limit
+			);
+			$ids = $wpdb->get_col( $sql );
+		}
+
+		if ( empty( $ids ) ) {
+			self::$new_product_ids_cache = array();
+		} else {
+			self::$new_product_ids_cache = array_fill_keys( array_map( 'intval', $ids ), true );
+		}
+
+		return self::$new_product_ids_cache;
+	}
+
+	/**
+	 * Check if a product or its parent is identified as a new product in stock.
 	 *
 	 * @param \WC_Product      $product Current product or variation.
 	 * @param \WC_Product|null $parent  Parent product if variation.
-	 * @param int              $days    Threshold in days.
-	 * @return bool True if created within the threshold.
+	 * @param array|int        $options Plugin settings array, or legacy int $days.
+	 * @return bool True if identified as new product in stock.
 	 */
-	public static function is_new_product( $product, $parent = null, $days = 30 ) {
-		$days = (int) $days;
-		if ( $days <= 0 ) {
+	public static function is_new_product( $product, $parent = null, $options = array() ) {
+		if ( ! $product || ! is_a( $product, '\WC_Product' ) || ! $product->is_in_stock() ) {
 			return false;
 		}
 
-		$cutoff = current_time( 'timestamp' ) - ( $days * DAY_IN_SECONDS );
-		$target = ( null !== $parent && is_a( $parent, '\WC_Product' ) ) ? $parent : $product;
-
-		$date_created = $target->get_date_created();
-		if ( $date_created ) {
-			return ( $date_created->getTimestamp() >= $cutoff );
+		// Backward compatibility if integer $days was passed.
+		if ( is_int( $options ) || is_numeric( $options ) ) {
+			$options = array( 'label_new_days' => (int) $options );
 		}
 
-		$post = get_post( $target->get_id() );
-		if ( $post && ! empty( $post->post_date_gmt ) && '0000-00-00 00:00:00' !== $post->post_date_gmt ) {
-			return ( strtotime( $post->post_date_gmt ) >= $cutoff );
+		$new_map = self::get_new_product_ids( $options );
+		if ( empty( $new_map ) ) {
+			return false;
+		}
+
+		$pid = (int) $product->get_id();
+		if ( isset( $new_map[ $pid ] ) ) {
+			return true;
+		}
+
+		if ( $parent ) {
+			$parent_id = (int) $parent->get_id();
+			if ( isset( $new_map[ $parent_id ] ) ) {
+				return true;
+			}
 		}
 
 		return false;
@@ -953,8 +1028,7 @@ class Feed_Item {
 
 		// 4. New product flag.
 		if ( ! empty( $options['label_enable_new'] ) ) {
-			$days = ! empty( $options['label_new_days'] ) ? (int) $options['label_new_days'] : 30;
-			if ( $days > 0 && self::is_new_product( $product, $parent, $days ) ) {
+			if ( self::is_new_product( $product, $parent, $options ) ) {
 				$new_tag  = ! empty( $options['label_new_tag'] ) ? $options['label_new_tag'] : 'nouveaute';
 				$labels[] = $new_tag;
 			}

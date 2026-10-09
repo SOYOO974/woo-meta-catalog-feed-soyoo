@@ -386,6 +386,7 @@ class Feed_Admin {
 			'label_promo_tag'          => sanitize_text_field( wp_unslash( $_POST['label_promo_tag'] ?? 'promo' ) ),
 			'label_enable_new'         => isset( $_POST['label_enable_new'] ) ? 1 : 0,
 			'label_new_days'           => max( 1, intval( $_POST['label_new_days'] ?? 30 ) ),
+			'label_new_count'          => max( 1, intval( $_POST['label_new_count'] ?? 50 ) ),
 			'label_new_tag'            => sanitize_text_field( wp_unslash( $_POST['label_new_tag'] ?? 'nouveaute' ) ),
 			'label_enable_bestseller'  => isset( $_POST['label_enable_bestseller'] ) ? 1 : 0,
 			'label_bestseller_count'   => max( 1, intval( $_POST['label_bestseller_count'] ?? ( $_POST['label_bestseller_value'] ?? 100 ) ) ),
@@ -915,12 +916,16 @@ class Feed_Admin {
 											<input name="label_new_days" type="number" min="1" max="365" id="label_new_days" value="<?php echo esc_attr( $options['label_new_days'] ?? 30 ); ?>" class="small-text" /> <?php esc_html_e( 'jours', 'woo-meta-catalog' ); ?>
 										</div>
 										<div>
+											<label for="label_new_count"><?php esc_html_e( 'Nombre max de produits (Top N) :', 'woo-meta-catalog' ); ?></label>
+											<input name="label_new_count" type="number" min="1" id="label_new_count" value="<?php echo esc_attr( $options['label_new_count'] ?? 50 ); ?>" class="small-text" />
+										</div>
+										<div>
 											<label for="label_new_tag"><?php esc_html_e( 'Nom du marqueur :', 'woo-meta-catalog' ); ?></label>
 											<input name="label_new_tag" type="text" id="label_new_tag" value="<?php echo esc_attr( $options['label_new_tag'] ?? 'nouveaute' ); ?>" class="regular-text" style="max-width: 160px;" />
 										</div>
 									</div>
 									<p class="description">
-										<?php esc_html_e( 'Attribue automatiquement le tag spécifié aux produits créés récemment pour créer un ensemble "Nouveautés" dynamique dans Meta.', 'woo-meta-catalog' ); ?>
+										<?php esc_html_e( 'Attribue automatiquement le tag spécifié aux N produits les plus récents créés dans la période définie et actuellement en stock.', 'woo-meta-catalog' ); ?>
 									</p>
 								</td>
 							</tr>
