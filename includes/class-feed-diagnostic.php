@@ -296,6 +296,42 @@ class Feed_Diagnostic {
 			'notes'       => array(),
 		);
 
+		// 9. Trending Products Engine.
+		$trending_enabled = ! empty( $options['label_enable_trending'] );
+		$trending_mode    = ! empty( $options['label_trending_mode'] ) ? $options['label_trending_mode'] : 'classic';
+		$trending_cache   = get_option( 'woo_meta_catalog_trending_cache', array() );
+		$trending_count   = ! empty( $trending_cache['total_count'] ) ? (int) $trending_cache['total_count'] : 0;
+		$trending_status  = 'info';
+		$trending_notes   = array();
+
+		if ( $trending_enabled ) {
+			if ( ! empty( $trending_cache['b1_warning'] ) ) {
+				$trending_status  = 'warning';
+				$trending_notes[] = sprintf(
+					__( 'Source Année N-1 directe (B1) incomplète (%1$d / %2$d produits). Vos fiches ont probablement été recréées cette année. Le repli catégorie (B2) a pris le relais pour %3$d produit(s).', 'woo-meta-catalog' ),
+					$trending_cache['count_b1'] ?? 0,
+					$trending_cache['quota_b'] ?? 0,
+					$trending_cache['count_b2'] ?? 0
+				);
+			} else {
+				$trending_status = 'ok';
+			}
+		}
+
+		$results['checks']['trending'] = array(
+			'title'   => __( 'Sélection Marqueur Tendance', 'woo-meta-catalog' ),
+			'status'  => $trending_status,
+			'badge'   => $trending_enabled ? ( 'seasonal' === $trending_mode ? __( 'Saisonnier', 'woo-meta-catalog' ) : __( 'Classique', 'woo-meta-catalog' ) ) : __( 'Désactivé', 'woo-meta-catalog' ),
+			'details' => array(
+				__( 'Marqueur Tendance actif', 'woo-meta-catalog' ) => $trending_enabled ? __( 'Oui', 'woo-meta-catalog' ) : __( 'Non', 'woo-meta-catalog' ),
+				__( 'Mode algorithmique', 'woo-meta-catalog' )       => 'seasonal' === $trending_mode ? __( 'Saisonnier (Ventes récentes + N-1 + Repli)', 'woo-meta-catalog' ) : __( 'Classique (Ventes récentes)', 'woo-meta-catalog' ),
+				__( 'Produits sélectionnés', 'woo-meta-catalog' )    => $trending_enabled ? sprintf( __( '%d produits', 'woo-meta-catalog' ), $trending_count ) : '-',
+				__( 'Dernier calcul', 'woo-meta-catalog' )           => ! empty( $trending_cache['calculated_at'] ) ? $trending_cache['calculated_at'] : '-',
+				__( 'Ajouts au panier (ATC)', 'woo-meta-catalog' )   => ! empty( $options['label_trending_enable_atc'] ) ? __( 'Activés (Pondération)', 'woo-meta-catalog' ) : __( 'Désactivés', 'woo-meta-catalog' ),
+			),
+			'notes'   => $trending_notes,
+		);
+
 		// Calculate global summary counters.
 		foreach ( $results['checks'] as $c ) {
 			if ( 'ok' === $c['status'] ) {

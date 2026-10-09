@@ -137,6 +137,14 @@ Consommé par `woo-fb-tracking-server-side` v2.1.0+ (mode « auto ») : `apply_f
 
 ## 📝 Changelog
 
+### 1.9.0
+- **Mode Tendance Saisonnière Multi-Sources** : ajout de l'algorithme saisonnier combinant ventes récentes (Source A), même période l'année précédente (Source B1) et repli automatique par catégorie la plus précise (Source B2).
+- **Repli Catégorie Intelligent & Distribution Round-Robin** : si les articles de l'an dernier sont épuisés ou recréés sous de nouvelles fiches (ex: Halloween/Noël sur KidShow.fr), le moteur identifie la catégorie feuille de chaque article et sélectionne à tour de rôle les nouveautés publiées et en stock dans ces rayons.
+- **Pondération des Ajouts au Panier (ATC)** : compteur interne résilient via le hook serveur `woocommerce_add_to_cart` dans une table dédiée avec purge automatique > 60 jours, sans dépendance externe et insensible au cache de page.
+- **Filtres d'Éligibilité Riches** : respect des seuils de stock minimum (pour simples et variations) et de prix effectif minimum (sur la variation la moins chère).
+- **Aperçu & Diagnostic Interactif** : tableau de prévisualisation dans l'administration avec bouton « Recalculer maintenant » AJAX, badges sources, indicateurs de ventes/score et alerte proactive si les fiches de l'an passé ont été renouvelées.
+- **Planification WP-Cron Dédiée** : recalcul automatique quotidien à 03h00 (fuseau horaire du site) avec mise en cache persistante 26h.
+
 ### 1.8.0
 - Ajout du réglage `id_format` dans l'administration WooCommerce ('id' => 'ID produit WooCommerce (recommandé)', 'sku' => 'SKU avec repli sur ID') avec persistance dans `woo_meta_catalog_settings`.
 - `Feed_Item::get_content_id()` utilise désormais l'option `id_format` (valeur par défaut : 'id' = Post ID WooCommerce).

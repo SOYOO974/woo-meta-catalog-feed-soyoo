@@ -3,7 +3,7 @@
  * Plugin Name:       Woo Meta Catalog Feed Soyoo
  * Plugin URI:        https://github.com/SOYOO974/woo-meta-catalog-feed-soyoo/
  * Description:       Générateur de flux catalogue XML haute performance, ultra-léger et autonome pour Meta Ads (Commerce Manager, Advantage+ Catalog Ads, retargeting DPA) et Google Shopping.
- * Version:           1.8.0
+ * Version:           1.9.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            SOYOO
@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin constants.
-define( 'WOO_META_CATALOG_FEED_VERSION', '1.8.0' );
+define( 'WOO_META_CATALOG_FEED_VERSION', '1.9.0' );
 define( 'WOO_META_CATALOG_FEED_FILE', __FILE__ );
 define( 'WOO_META_CATALOG_FEED_DIR', plugin_dir_path( __FILE__ ) );
 define( 'WOO_META_CATALOG_FEED_URL', plugin_dir_url( __FILE__ ) );
@@ -52,45 +52,75 @@ register_activation_hook( __FILE__, 'woo_meta_catalog_feed_activate' );
 register_deactivation_hook( __FILE__, 'woo_meta_catalog_feed_deactivate' );
 
 /**
+ * Schedule the daily trending calculation event at 03:00 site local time.
+ */
+function woo_meta_catalog_schedule_daily_trending() {
+	if ( ! wp_next_scheduled( 'woo_meta_catalog_daily_trending_calculation' ) ) {
+		$time_offset   = get_option( 'gmt_offset' ) * HOUR_IN_SECONDS;
+		$current_local = current_time( 'timestamp' );
+		$target_local  = strtotime( 'today 03:00', $current_local );
+		if ( $target_local <= $current_local ) {
+			$target_local = strtotime( 'tomorrow 03:00', $current_local );
+		}
+		$target_utc = $target_local - $time_offset;
+		wp_schedule_event( $target_utc, 'daily', 'woo_meta_catalog_daily_trending_calculation' );
+	}
+}
+
+/**
  * Plugin activation routine.
  */
 function woo_meta_catalog_feed_activate() {
 	// Initialize default settings if not set.
 	$default_settings = array(
-		'id_format'                => 'id',
-		'exclude_out_of_stock'     => 0,
-		'exclude_no_image'         => 1,
-		'image_version'            => '',
-		'enable_image_cdn'         => 0,
-		'image_cdn_provider'       => 'imagekit',
-		'image_cdn_endpoint'       => '',
-		'image_cdn_auto_square'    => 1,
-		'image_cdn_force_jpeg'     => 1,
-		'default_brand'            => get_bloginfo( 'name' ),
-		'brand_attribute'          => '',
-		'enable_utms'              => 1,
-		'utm_source'               => 'facebook',
-		'utm_medium'               => 'catalog',
-		'utm_campaign'             => 'meta_feed',
-		'enable_security_key'      => 0,
-		'security_key'             => wp_generate_password( 24, false, false ),
-		'batch_size'               => 50,
-		'daily_time'               => '03:30',
-		'label_include_categories' => 0,
-		'label_include_tags'       => 0,
-		'label_enable_promo'       => 0,
-		'label_promo_tag'          => 'promo',
-		'label_enable_new'         => 0,
-		'label_new_days'           => 30,
-		'label_new_count'          => 50,
-		'label_new_tag'            => 'nouveaute',
-		'label_enable_bestseller'  => 0,
-		'label_bestseller_count'   => 100,
-		'label_bestseller_tag'     => 'bestseller',
-		'label_enable_trending'    => 0,
-		'label_trending_count'     => 35,
-		'label_trending_days'      => 45,
-		'label_trending_tag'       => 'tendance',
+		'id_format'                            => 'id',
+		'exclude_out_of_stock'                 => 0,
+		'exclude_no_image'                     => 1,
+		'image_version'                        => '',
+		'enable_image_cdn'                     => 0,
+		'image_cdn_provider'                   => 'imagekit',
+		'image_cdn_endpoint'                   => '',
+		'image_cdn_auto_square'                => 1,
+		'image_cdn_force_jpeg'                 => 1,
+		'default_brand'                        => get_bloginfo( 'name' ),
+		'brand_attribute'                      => '',
+		'enable_utms'                          => 1,
+		'utm_source'                           => 'facebook',
+		'utm_medium'                           => 'catalog',
+		'utm_campaign'                         => 'meta_feed',
+		'enable_security_key'                  => 0,
+		'security_key'                         => wp_generate_password( 24, false, false ),
+		'batch_size'                           => 50,
+		'daily_time'                           => '03:30',
+		'label_include_categories'             => 0,
+		'label_include_tags'                   => 0,
+		'label_enable_promo'                   => 0,
+		'label_promo_tag'                      => 'promo',
+		'label_enable_new'                     => 0,
+		'label_new_days'                       => 30,
+		'label_new_count'                      => 50,
+		'label_new_tag'                        => 'nouveaute',
+		'label_enable_bestseller'              => 0,
+		'label_bestseller_count'               => 100,
+		'label_bestseller_tag'                 => 'bestseller',
+		'label_enable_trending'                => 0,
+		'label_trending_mode'                  => 'classic',
+		'label_trending_count'                 => 35,
+		'label_trending_days'                  => 45,
+		'label_trending_tag'                   => 'tendance',
+		'label_trending_recent_ratio'          => 60,
+		'label_trending_recent_days'           => 15,
+		'label_trending_enable_atc'            => 0,
+		'label_trending_atc_weight'            => 0.3,
+		'label_trending_min_sales'             => 2,
+		'label_trending_min_atc'               => 3,
+		'label_trending_prev_year_days_before' => 5,
+		'label_trending_prev_year_days_after'  => 25,
+		'label_trending_enable_cat_fallback'   => 1,
+		'label_trending_cat_fallback_cap'      => 15,
+		'label_trending_cat_fallback_excluded' => array(),
+		'label_trending_min_price'             => 8.0,
+		'label_trending_min_stock'             => 2,
 	);
 
 	$existing = get_option( 'woo_meta_catalog_settings', array() );
@@ -98,9 +128,16 @@ function woo_meta_catalog_feed_activate() {
 		update_option( 'woo_meta_catalog_settings', $default_settings );
 	}
 
+	// Create Add-to-Cart internal table if needed.
+	require_once WOO_META_CATALOG_FEED_DIR . 'includes/class-feed-item.php';
+	\SOYOO\MetaCatalog\Feed_Item::maybe_create_atc_table();
+
 	// Load core generator for scheduling.
 	require_once WOO_META_CATALOG_FEED_DIR . 'includes/class-feed-generator.php';
 	\SOYOO\MetaCatalog\Feed_Generator::schedule_daily_event();
+
+	// Schedule daily trending calculation.
+	woo_meta_catalog_schedule_daily_trending();
 
 	// Flush rewrite rules for pretty /feed/meta-catalog.xml URL.
 	require_once WOO_META_CATALOG_FEED_DIR . 'includes/class-feed-server.php';
@@ -118,6 +155,7 @@ function woo_meta_catalog_feed_deactivate() {
 		as_unschedule_all_actions( 'woo_meta_catalog_process_chunk' );
 		as_unschedule_all_actions( 'woo_meta_catalog_finalize_feed' );
 	}
+	wp_clear_scheduled_hook( 'woo_meta_catalog_daily_trending_calculation' );
 	flush_rewrite_rules( false );
 }
 
@@ -157,6 +195,17 @@ function woo_meta_catalog_feed_init() {
 
 	// Register WP-CLI commands if running in CLI.
 	\SOYOO\MetaCatalog\Feed_CLI::register();
+
+	// Ensure daily trending calculation cron is scheduled.
+	woo_meta_catalog_schedule_daily_trending();
+
+	// Hook daily trending recalculation.
+	add_action( 'woo_meta_catalog_daily_trending_calculation', function() {
+		\SOYOO\MetaCatalog\Feed_Item::calculate_trending_ids( true );
+	} );
+
+	// Listen to internal Add-to-Cart events for seasonal trending calculation.
+	add_action( 'woocommerce_add_to_cart', array( '\SOYOO\MetaCatalog\Feed_Item', 'on_add_to_cart' ), 10, 6 );
 
 	// Inter-plugin contract: expose the exact catalog <g:id> to woo-fb-tracking-server-side
 	// (v2.1.0+, "auto" mode). The feed is the single source of truth for Meta content IDs.

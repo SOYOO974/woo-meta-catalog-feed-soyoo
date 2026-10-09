@@ -1056,4 +1056,21 @@ body.woocommerce_page_woo-meta-catalog-feed .notice.woo-meta-allowed-notice {
 	font-family: monospace;
 }
 
+/* Trending Seasonal Styles */
+.woo-meta-trending-preview-wrap table th,
+.woo-meta-trending-preview-wrap table td {
+	padding: 10px 12px;
+	vertical-align: middle;
+}
+
+#btn-recalculate-trending.loading .dashicons {
+	animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+	100% {
+		transform: rotate(360deg);
+	}
+}
+
 

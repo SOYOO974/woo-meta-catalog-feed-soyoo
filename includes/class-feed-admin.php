@@ -33,6 +33,7 @@ class Feed_Admin {
 		add_action( 'wp_ajax_woo_meta_catalog_test_cdn', array( $this, 'ajax_test_cdn' ) );
 		add_action( 'wp_ajax_woo_meta_catalog_run_diagnostic_test', array( $this, 'ajax_run_diagnostic_test' ) );
 		add_action( 'wp_ajax_woo_meta_catalog_clear_logs', array( $this, 'ajax_clear_logs' ) );
+		add_action( 'wp_ajax_woo_meta_catalog_recalculate_trending', array( $this, 'ajax_recalculate_trending' ) );
 		add_action( 'admin_init', array( $this, 'save_settings' ) );
 	}
 
@@ -379,6 +380,198 @@ class Feed_Admin {
 	}
 
 	/**
+	 * Handle AJAX recalculate trending products.
+	 */
+	public function ajax_recalculate_trending() {
+		check_ajax_referer( 'woo_meta_catalog_admin_nonce', 'security' );
+
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Droits insuffisants.', 'woo-meta-catalog' ) ) );
+		}
+
+		Feed_Item::calculate_trending_ids( true );
+		$cache = get_option( 'woo_meta_catalog_trending_cache', array() );
+
+		ob_start();
+		$this->render_trending_preview_box( $cache );
+		$html = ob_get_clean();
+
+		wp_send_json_success( array(
+			'message' => __( 'Sélection Tendance recalculée avec succès.', 'woo-meta-catalog' ),
+			'html'    => $html,
+			'total'   => $cache['total_count'] ?? 0,
+		) );
+	}
+
+	/**
+	 * Render preview table and diagnostics for the trending marker selection.
+	 *
+	 * @param array|null $cache Cached trending data array.
+	 */
+	public function render_trending_preview_box( $cache = null ) {
+		if ( null === $cache ) {
+			$cache = get_option( 'woo_meta_catalog_trending_cache', array() );
+		}
+
+		$options     = get_option( 'woo_meta_catalog_settings', array() );
+		$mode        = ! empty( $options['label_trending_mode'] ) ? $options['label_trending_mode'] : 'classic';
+		$is_seasonal = ( 'seasonal' === $mode );
+
+		$items       = ! empty( $cache['items'] ) && is_array( $cache['items'] ) ? $cache['items'] : array();
+		$total_count = ! empty( $cache['total_count'] ) ? (int) $cache['total_count'] : count( $items );
+		$calc_date   = ! empty( $cache['calculated_at'] ) ? $cache['calculated_at'] : '-';
+		$b1_warning  = ! empty( $cache['b1_warning'] );
+
+		$count_a  = isset( $cache['count_a'] ) ? (int) $cache['count_a'] : 0;
+		$count_b1 = isset( $cache['count_b1'] ) ? (int) $cache['count_b1'] : 0;
+		$count_b2 = isset( $cache['count_b2'] ) ? (int) $cache['count_b2'] : 0;
+		$quota_a  = isset( $cache['quota_a'] ) ? (int) $cache['quota_a'] : 0;
+		$quota_b  = isset( $cache['quota_b'] ) ? (int) $cache['quota_b'] : 0;
+		$b2_cap   = isset( $cache['b2_cap'] ) ? (int) $cache['b2_cap'] : 0;
+		?>
+		<div id="woo-meta-trending-preview-box" class="woo-meta-trending-preview-wrap" style="margin-top: 15px; background: #ffffff; border: 1px solid #c3c4c7; border-radius: 6px; padding: 16px;">
+			<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #f0f0f1;">
+				<div>
+					<h4 style="margin: 0 0 4px 0; font-size: 14px; font-weight: 700; color: #1e293b;">
+						<span class="dashicons dashicons-chart-line" style="vertical-align: middle; margin-right: 4px; color: #0284c7;"></span>
+						<?php esc_html_e( 'Aperçu & Diagnostic de la sélection Tendance', 'woo-meta-catalog' ); ?>
+					</h4>
+					<div style="font-size: 12px; color: #64748b;">
+						<?php if ( $is_seasonal ) : ?>
+							<span class="diag-badge" style="background: #e0f2fe; color: #0369a1; font-weight: 700; margin-right: 6px;"><?php esc_html_e( 'Mode Saisonnier', 'woo-meta-catalog' ); ?></span>
+						<?php else : ?>
+							<span class="diag-badge" style="background: #f1f5f9; color: #475569; font-weight: 700; margin-right: 6px;"><?php esc_html_e( 'Mode Classique', 'woo-meta-catalog' ); ?></span>
+						<?php endif; ?>
+						<?php printf( esc_html__( 'Total sélectionné : %d produit(s) • Dernier calcul : %s', 'woo-meta-catalog' ), $total_count, esc_html( $calc_date ) ); ?>
+					</div>
+				</div>
+				<div>
+					<button type="button" id="btn-recalculate-trending" class="button button-secondary">
+						<span class="dashicons dashicons-update" style="vertical-align: middle; margin-right: 4px;"></span>
+						<span class="btn-text"><?php esc_html_e( 'Recalculer maintenant', 'woo-meta-catalog' ); ?></span>
+					</button>
+				</div>
+			</div>
+
+			<?php if ( $is_seasonal && ! empty( $cache ) ) : ?>
+				<!-- METRICS PILLS -->
+				<div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px;">
+					<div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 4px; padding: 6px 12px; font-size: 12px; color: #15803d;">
+						<strong><?php esc_html_e( 'Source A (Ventes récentes) :', 'woo-meta-catalog' ); ?></strong> <?php echo esc_html( $count_a ); ?> / <?php echo esc_html( $quota_a ); ?>
+					</div>
+					<div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 4px; padding: 6px 12px; font-size: 12px; color: #1d4ed8;">
+						<strong><?php esc_html_e( 'Source B1 (Année N-1 directe) :', 'woo-meta-catalog' ); ?></strong> <?php echo esc_html( $count_b1 ); ?> / <?php echo esc_html( $quota_b ); ?>
+					</div>
+					<div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 4px; padding: 6px 12px; font-size: 12px; color: #b45309;">
+						<strong><?php esc_html_e( 'Source B2 (Repli catégorie) :', 'woo-meta-catalog' ); ?></strong> <?php echo esc_html( $count_b2 ); ?> (plafond max : <?php echo esc_html( $b2_cap ); ?>)
+					</div>
+				</div>
+
+				<?php if ( $b1_warning ) : ?>
+					<div class="notice notice-warning inline" style="margin: 0 0 14px 0; padding: 10px 14px; border-left: 4px solid #f59e0b; background: #fffbeb; border-radius: 4px;">
+						<p style="margin: 0; font-size: 13px; color: #92400e; line-height: 1.4;">
+							<strong>⚠️ <?php esc_html_e( 'Attention — Renouvellement de fiches détecté :', 'woo-meta-catalog' ); ?></strong>
+							<?php printf( esc_html__( 'La source Année précédente (B1) ne couvre que %1$d / %2$d produits prévus. Les fiches produits ont très probablement été recréées cette année. Le repli par catégorie (B2) a pris le relais pour %3$d produit(s).', 'woo-meta-catalog' ), $count_b1, $quota_b, $count_b2 ); ?>
+						</p>
+					</div>
+				<?php endif; ?>
+			<?php endif; ?>
+
+			<?php if ( empty( $items ) ) : ?>
+				<p style="margin: 0; color: #64748b; font-style: italic;">
+					<?php esc_html_e( 'Aucun produit calculé pour le moment. Cliquez sur « Recalculer maintenant » pour générer la sélection.', 'woo-meta-catalog' ); ?>
+				</p>
+			<?php else : ?>
+				<div style="max-height: 420px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 4px;">
+					<table class="wp-list-table widefat fixed striped" style="border: none; margin: 0;">
+						<thead style="position: sticky; top: 0; background: #f8fafc; z-index: 2;">
+							<tr>
+								<th style="width: 40px; text-align: center;">#</th>
+								<th style="min-width: 220px;"><?php esc_html_e( 'Produit', 'woo-meta-catalog' ); ?></th>
+								<th style="width: 140px;"><?php esc_html_e( 'Source', 'woo-meta-catalog' ); ?></th>
+								<th style="width: 150px;"><?php esc_html_e( 'Score / Ventes', 'woo-meta-catalog' ); ?></th>
+								<th style="width: 100px;"><?php esc_html_e( 'Prix effectif', 'woo-meta-catalog' ); ?></th>
+								<th style="width: 100px;"><?php esc_html_e( 'Stock', 'woo-meta-catalog' ); ?></th>
+								<th style="width: 160px;"><?php esc_html_e( 'Catégorie repli', 'woo-meta-catalog' ); ?></th>
+							</tr>
+						</thead>
+						<tbody>
+							<?php foreach ( $items as $idx => $item ) : ?>
+								<tr>
+									<td style="text-align: center; color: #94a3b8; font-weight: 600;"><?php echo (int) ( $idx + 1 ); ?></td>
+									<td>
+										<div style="display: flex; align-items: center; gap: 10px;">
+											<?php if ( ! empty( $item['thumb'] ) ) : ?>
+												<img src="<?php echo esc_url( $item['thumb'] ); ?>" style="width: 36px; height: 36px; object-fit: cover; border-radius: 4px; border: 1px solid #e2e8f0; flex-shrink: 0;" alt="" />
+											<?php endif; ?>
+											<div>
+												<a href="<?php echo esc_url( admin_url( 'post.php?post=' . (int) $item['id'] . '&action=edit' ) ); ?>" target="_blank" style="font-weight: 600; text-decoration: none;">
+													<?php echo esc_html( $item['name'] ); ?>
+												</a>
+												<div style="font-size: 11px; color: #64748b;">ID: <?php echo (int) $item['id']; ?></div>
+											</div>
+										</div>
+									</td>
+									<td>
+										<?php if ( 'A' === $item['source'] ) : ?>
+											<span class="diag-badge" style="background: #dcfce7; color: #15803d;"><?php esc_html_e( 'Récent [A]', 'woo-meta-catalog' ); ?></span>
+										<?php elseif ( 'B1' === $item['source'] ) : ?>
+											<span class="diag-badge" style="background: #dbeafe; color: #1e40af;"><?php esc_html_e( 'Année N-1 [B1]', 'woo-meta-catalog' ); ?></span>
+										<?php elseif ( 'B2' === $item['source'] ) : ?>
+											<span class="diag-badge" style="background: #fef3c7; color: #b45309;"><?php esc_html_e( 'Repli [B2]', 'woo-meta-catalog' ); ?></span>
+										<?php else : ?>
+											<span class="diag-badge" style="background: #f1f5f9; color: #475569;"><?php echo esc_html( $item['source'] ); ?></span>
+										<?php endif; ?>
+									</td>
+									<td>
+										<?php if ( 'A' === $item['source'] ) : ?>
+											<strong><?php echo esc_html( $item['score'] ); ?></strong>
+											<span style="font-size: 11px; color: #64748b; display: block;">
+												<?php
+												if ( ! empty( $item['atc'] ) ) {
+													printf( esc_html__( '%1$d ventes • %2$d ajouts', 'woo-meta-catalog' ), (int) $item['sales'], (int) $item['atc'] );
+												} else {
+													printf( esc_html__( '%d ventes', 'woo-meta-catalog' ), (int) $item['sales'] );
+												}
+												?>
+											</span>
+										<?php elseif ( 'B1' === $item['source'] ) : ?>
+											<strong><?php echo (int) $item['sales']; ?></strong>
+											<span style="font-size: 11px; color: #64748b; display: block;"><?php esc_html_e( 'ventes l\'an passé', 'woo-meta-catalog' ); ?></span>
+										<?php elseif ( 'B2' === $item['source'] ) : ?>
+											<span style="font-size: 11px; color: #64748b;"><?php esc_html_e( 'Nouveauté catégorie', 'woo-meta-catalog' ); ?></span>
+										<?php else : ?>
+											<strong><?php echo (int) $item['sales']; ?></strong> <?php esc_html_e( 'ventes', 'woo-meta-catalog' ); ?>
+										<?php endif; ?>
+									</td>
+									<td>
+										<strong><?php echo wc_price( $item['price'] ); ?></strong>
+									</td>
+									<td>
+										<?php if ( null !== $item['stock'] ) : ?>
+											<span style="color: #15803d;"><?php echo esc_html( $item['stock'] ); ?> <?php esc_html_e( 'en stock', 'woo-meta-catalog' ); ?></span>
+										<?php else : ?>
+											<span style="color: #15803d;"><?php esc_html_e( 'En stock', 'woo-meta-catalog' ); ?></span>
+										<?php endif; ?>
+									</td>
+									<td>
+										<?php if ( ! empty( $item['fallback_cat'] ) ) : ?>
+											<span style="font-size: 12px; color: #b45309;"><?php echo esc_html( $item['fallback_cat'] ); ?></span>
+										<?php else : ?>
+											<span style="color: #94a3b8;">—</span>
+										<?php endif; ?>
+									</td>
+								</tr>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+				</div>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
 	 * Save plugin settings.
 	 */
 	public function save_settings() {
@@ -428,13 +621,36 @@ class Feed_Admin {
 			'label_bestseller_count'   => max( 1, intval( $_POST['label_bestseller_count'] ?? ( $_POST['label_bestseller_value'] ?? 100 ) ) ),
 			'label_bestseller_value'   => max( 1, intval( $_POST['label_bestseller_count'] ?? ( $_POST['label_bestseller_value'] ?? 100 ) ) ),
 			'label_bestseller_tag'     => sanitize_text_field( wp_unslash( $_POST['label_bestseller_tag'] ?? 'bestseller' ) ),
-			'label_enable_trending'    => isset( $_POST['label_enable_trending'] ) ? 1 : 0,
-			'label_trending_count'     => max( 1, intval( $_POST['label_trending_count'] ?? 35 ) ),
-			'label_trending_days'      => max( 1, intval( $_POST['label_trending_days'] ?? 45 ) ),
-			'label_trending_tag'       => sanitize_text_field( wp_unslash( $_POST['label_trending_tag'] ?? 'tendance' ) ),
+			'label_enable_trending'                => isset( $_POST['label_enable_trending'] ) ? 1 : 0,
+			'label_trending_mode'                  => isset( $_POST['label_trending_mode'] ) && 'seasonal' === $_POST['label_trending_mode'] ? 'seasonal' : 'classic',
+			'label_trending_count'                 => max( 1, intval( $_POST['label_trending_count'] ?? 35 ) ),
+			'label_trending_days'                  => max( 1, intval( $_POST['label_trending_days'] ?? 45 ) ),
+			'label_trending_tag'                   => sanitize_text_field( wp_unslash( $_POST['label_trending_tag'] ?? 'tendance' ) ),
+			'label_trending_recent_ratio'          => max( 0.0, min( 100.0, floatval( $_POST['label_trending_recent_ratio'] ?? 60.0 ) ) ),
+			'label_trending_recent_days'           => max( 1, intval( $_POST['label_trending_recent_days'] ?? 15 ) ),
+			'label_trending_enable_atc'            => isset( $_POST['label_trending_enable_atc'] ) ? 1 : 0,
+			'label_trending_atc_weight'            => max( 0.0, floatval( $_POST['label_trending_atc_weight'] ?? 0.3 ) ),
+			'label_trending_min_sales'             => max( 1, intval( $_POST['label_trending_min_sales'] ?? 2 ) ),
+			'label_trending_min_atc'               => max( 1, intval( $_POST['label_trending_min_atc'] ?? 3 ) ),
+			'label_trending_prev_year_days_before' => max( 0, intval( $_POST['label_trending_prev_year_days_before'] ?? 5 ) ),
+			'label_trending_prev_year_days_after'  => max( 0, intval( $_POST['label_trending_prev_year_days_after'] ?? 25 ) ),
+			'label_trending_enable_cat_fallback'   => isset( $_POST['label_trending_enable_cat_fallback'] ) ? 1 : 0,
+			'label_trending_cat_fallback_cap'      => max( 0.0, min( 100.0, floatval( $_POST['label_trending_cat_fallback_cap'] ?? 15.0 ) ) ),
+			'label_trending_cat_fallback_excluded' => isset( $_POST['label_trending_cat_fallback_excluded'] ) && is_array( $_POST['label_trending_cat_fallback_excluded'] ) ? array_map( 'intval', $_POST['label_trending_cat_fallback_excluded'] ) : array(),
+			'label_trending_min_price'             => max( 0.0, floatval( $_POST['label_trending_min_price'] ?? 8.0 ) ),
+			'label_trending_min_stock'             => max( 1, intval( $_POST['label_trending_min_stock'] ?? 2 ) ),
 		);
 
 		update_option( 'woo_meta_catalog_settings', $settings );
+
+		// If ATC enabled, ensure table exists.
+		if ( ! empty( $settings['label_trending_enable_atc'] ) ) {
+			Feed_Item::maybe_create_atc_table();
+		}
+
+		// Invalidate trending cache and in-memory cache so fresh settings apply immediately.
+		delete_option( 'woo_meta_catalog_trending_cache' );
+		Feed_Item::reset_sales_cache();
 
 		// Reschedule daily event with updated time.
 		Feed_Generator::schedule_daily_event();
@@ -1037,27 +1253,188 @@ class Feed_Admin {
 							<tr>
 								<th scope="row"><?php esc_html_e( 'Marqueur Tendance', 'woo-meta-catalog' ); ?></th>
 								<td>
-									<label for="label_enable_trending">
+									<label for="label_enable_trending" style="font-weight: 600;">
 										<input name="label_enable_trending" type="checkbox" id="label_enable_trending" value="1" <?php checked( ! empty( $options['label_enable_trending'] ) ); ?> />
-										<?php esc_html_e( 'Ajouter automatiquement un marqueur pour les produits tendance (ventes récentes)', 'woo-meta-catalog' ); ?>
+										<?php esc_html_e( 'Ajouter automatiquement un marqueur pour les produits tendance dans le flux Meta', 'woo-meta-catalog' ); ?>
 									</label>
-									<div style="margin-top: 8px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
-										<div>
-											<label for="label_trending_count"><?php esc_html_e( 'Nombre de produits (Top N) :', 'woo-meta-catalog' ); ?></label>
-											<input name="label_trending_count" type="number" min="1" id="label_trending_count" value="<?php echo esc_attr( $options['label_trending_count'] ?? 35 ); ?>" class="small-text" />
+									<p class="description" style="margin-top: 4px;">
+										<?php esc_html_e( 'Attribue le marqueur aux produits les plus performants. Idéal pour créer un ensemble dynamique « Tendances » dans Meta Ads Advantage+.', 'woo-meta-catalog' ); ?>
+									</p>
+
+									<div id="woo-meta-trending-settings-wrap" style="margin-top: 15px; <?php echo empty( $options['label_enable_trending'] ) ? 'display: none;' : ''; ?>">
+										<!-- MODE SELECTOR -->
+										<div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px 16px; margin-bottom: 15px;">
+											<div style="font-weight: 600; margin-bottom: 8px; color: #1e293b;"><?php esc_html_e( 'Algorithme de calcul :', 'woo-meta-catalog' ); ?></div>
+											<label style="margin-right: 20px; cursor: pointer;">
+												<input type="radio" name="label_trending_mode" value="classic" class="trending-mode-radio" <?php checked( empty( $options['label_trending_mode'] ) || 'classic' === $options['label_trending_mode'] ); ?> />
+												<strong><?php esc_html_e( 'Mode Classique', 'woo-meta-catalog' ); ?></strong>
+												<span style="color: #64748b; font-size: 12px;"> — <?php esc_html_e( 'Ventes directes sur les X derniers jours', 'woo-meta-catalog' ); ?></span>
+											</label>
+											<label style="cursor: pointer;">
+												<input type="radio" name="label_trending_mode" value="seasonal" class="trending-mode-radio" <?php checked( ! empty( $options['label_trending_mode'] ) && 'seasonal' === $options['label_trending_mode'] ); ?> />
+												<strong><?php esc_html_e( 'Mode Saisonnier (Recommandé)', 'woo-meta-catalog' ); ?></strong>
+												<span style="color: #64748b; font-size: 12px;"> — <?php esc_html_e( 'Ventes récentes + Période N-1 + Repli automatique par catégorie', 'woo-meta-catalog' ); ?></span>
+											</label>
 										</div>
-										<div>
-											<label for="label_trending_days"><?php esc_html_e( 'Ventes des derniers :', 'woo-meta-catalog' ); ?></label>
-											<input name="label_trending_days" type="number" min="1" max="365" id="label_trending_days" value="<?php echo esc_attr( $options['label_trending_days'] ?? 45 ); ?>" class="small-text" /> <?php esc_html_e( 'jours', 'woo-meta-catalog' ); ?>
+
+										<!-- CLASSIC SETTINGS -->
+										<div id="trending-fields-classic" style="<?php echo ( ! empty( $options['label_trending_mode'] ) && 'seasonal' === $options['label_trending_mode'] ) ? 'display: none;' : ''; ?> margin-bottom: 15px; background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px;">
+											<div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+												<div>
+													<label for="label_trending_count_classic"><strong><?php esc_html_e( 'Nombre de produits (Top N) :', 'woo-meta-catalog' ); ?></strong></label><br>
+													<input name="label_trending_count" type="number" min="1" id="label_trending_count_classic" value="<?php echo esc_attr( $options['label_trending_count'] ?? 35 ); ?>" class="small-text" />
+												</div>
+												<div>
+													<label for="label_trending_days"><strong><?php esc_html_e( 'Ventes des derniers :', 'woo-meta-catalog' ); ?></strong></label><br>
+													<input name="label_trending_days" type="number" min="1" max="365" id="label_trending_days" value="<?php echo esc_attr( $options['label_trending_days'] ?? 45 ); ?>" class="small-text" /> <?php esc_html_e( 'jours', 'woo-meta-catalog' ); ?>
+												</div>
+											</div>
 										</div>
-										<div>
-											<label for="label_trending_tag"><?php esc_html_e( 'Nom du marqueur :', 'woo-meta-catalog' ); ?></label>
+
+										<!-- SEASONAL SETTINGS -->
+										<div id="trending-fields-seasonal" style="<?php echo ( empty( $options['label_trending_mode'] ) || 'seasonal' !== $options['label_trending_mode'] ) ? 'display: none;' : ''; ?> margin-bottom: 15px;">
+											<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px;">
+												<!-- SECTION 1: VOLUME & QUOTAS -->
+												<div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px;">
+													<h5 style="margin: 0 0 10px 0; font-size: 13px; font-weight: 700; color: #1e293b;">
+														<span class="dashicons dashicons-chart-pie" style="vertical-align: middle; color: #0284c7;"></span> <?php esc_html_e( '1. Volume global & Répartition', 'woo-meta-catalog' ); ?>
+													</h5>
+													<div style="margin-bottom: 10px;">
+														<label for="label_trending_count_seasonal"><?php esc_html_e( 'Nombre total de produits (N) :', 'woo-meta-catalog' ); ?></label><br>
+														<input name="label_trending_count" type="number" min="1" id="label_trending_count_seasonal" value="<?php echo esc_attr( $options['label_trending_count'] ?? 60 ); ?>" class="small-text" />
+													</div>
+													<div>
+														<label for="label_trending_recent_ratio"><?php esc_html_e( 'Part ventes récentes (%) :', 'woo-meta-catalog' ); ?></label><br>
+														<input name="label_trending_recent_ratio" type="number" min="0" max="100" id="label_trending_recent_ratio" value="<?php echo esc_attr( $options['label_trending_recent_ratio'] ?? 60 ); ?>" class="small-text" /> %
+														<p class="description" style="margin-top: 4px;" id="label_trending_prev_ratio_desc">
+															<?php
+															$r_ratio = (float) ( $options['label_trending_recent_ratio'] ?? 60 );
+															printf( esc_html__( 'Part période année N-1 : %d%%', 'woo-meta-catalog' ), (int) ( 100 - $r_ratio ) );
+															?>
+														</p>
+													</div>
+												</div>
+
+												<!-- SECTION 2: VENTES RÉCENTES (SOURCE A) -->
+												<div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px;">
+													<h5 style="margin: 0 0 10px 0; font-size: 13px; font-weight: 700; color: #1e293b;">
+														<span class="dashicons dashicons-clock" style="vertical-align: middle; color: #16a34a;"></span> <?php esc_html_e( '2. Source A — Ventes récentes', 'woo-meta-catalog' ); ?>
+													</h5>
+													<div style="margin-bottom: 10px;">
+														<label for="label_trending_recent_days"><?php esc_html_e( 'Fenêtre récente en jours (D) :', 'woo-meta-catalog' ); ?></label><br>
+														<input name="label_trending_recent_days" type="number" min="1" max="180" id="label_trending_recent_days" value="<?php echo esc_attr( $options['label_trending_recent_days'] ?? 15 ); ?>" class="small-text" /> <?php esc_html_e( 'jours', 'woo-meta-catalog' ); ?>
+													</div>
+													<div style="margin-bottom: 10px;">
+														<label>
+															<input name="label_trending_enable_atc" type="checkbox" id="label_trending_enable_atc" value="1" <?php checked( ! empty( $options['label_trending_enable_atc'] ) ); ?> />
+															<strong><?php esc_html_e( 'Utiliser les ajouts au panier', 'woo-meta-catalog' ); ?></strong>
+														</label>
+														<div id="trending-atc-weight-wrap" style="margin-top: 6px; <?php echo empty( $options['label_trending_enable_atc'] ) ? 'display:none;' : ''; ?>">
+															<label for="label_trending_atc_weight"><?php esc_html_e( 'Poids d\'un ajout au panier :', 'woo-meta-catalog' ); ?></label>
+															<input name="label_trending_atc_weight" type="number" step="0.05" min="0" max="5" id="label_trending_atc_weight" value="<?php echo esc_attr( $options['label_trending_atc_weight'] ?? '0.3' ); ?>" class="small-text" />
+														</div>
+													</div>
+													<div>
+														<label><strong><?php esc_html_e( 'Seuil d\'entrée Source A :', 'woo-meta-catalog' ); ?></strong></label><br>
+														<span style="font-size: 12px;">
+															Au moins <input name="label_trending_min_sales" type="number" min="1" value="<?php echo esc_attr( $options['label_trending_min_sales'] ?? 2 ); ?>" class="small-text" style="width: 50px;" /> ventes,<br>
+															OU 1 vente et <input name="label_trending_min_atc" type="number" min="1" value="<?php echo esc_attr( $options['label_trending_min_atc'] ?? 3 ); ?>" class="small-text" style="width: 50px;" /> ajouts au panier.
+														</span>
+													</div>
+												</div>
+
+												<!-- SECTION 3: ANNÉE PRÉCÉDENTE (SOURCE B1) -->
+												<div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px;">
+													<h5 style="margin: 0 0 10px 0; font-size: 13px; font-weight: 700; color: #1e293b;">
+														<span class="dashicons dashicons-calendar-alt" style="vertical-align: middle; color: #2563eb;"></span> <?php esc_html_e( '3. Source B — Période Année N-1', 'woo-meta-catalog' ); ?>
+													</h5>
+													<p style="margin: 0 0 8px 0; font-size: 12px; color: #64748b;">
+														<?php esc_html_e( 'Fenêtre calculée un an plus tôt [J - a ; J + b] avec fuseau horaire du site et gestion des années bissextiles :', 'woo-meta-catalog' ); ?>
+													</p>
+													<div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+														<div>
+															<label for="label_trending_prev_year_days_before" style="font-size: 12px;"><?php esc_html_e( 'J - (jours avant) :', 'woo-meta-catalog' ); ?></label><br>
+															<input name="label_trending_prev_year_days_before" type="number" min="0" max="180" id="label_trending_prev_year_days_before" value="<?php echo esc_attr( $options['label_trending_prev_year_days_before'] ?? 5 ); ?>" class="small-text" />
+														</div>
+														<div>
+															<label for="label_trending_prev_year_days_after" style="font-size: 12px;"><?php esc_html_e( 'J + (jours après) :', 'woo-meta-catalog' ); ?></label><br>
+															<input name="label_trending_prev_year_days_after" type="number" min="0" max="180" id="label_trending_prev_year_days_after" value="<?php echo esc_attr( $options['label_trending_prev_year_days_after'] ?? 25 ); ?>" class="small-text" />
+														</div>
+													</div>
+												</div>
+
+												<!-- SECTION 4: REPLI CATÉGORIE (SOURCE B2) -->
+												<div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px;">
+													<h5 style="margin: 0 0 10px 0; font-size: 13px; font-weight: 700; color: #1e293b;">
+														<span class="dashicons dashicons-category" style="vertical-align: middle; color: #d97706;"></span> <?php esc_html_e( '4. Source B2 — Repli par catégorie', 'woo-meta-catalog' ); ?>
+													</h5>
+													<div style="margin-bottom: 8px;">
+														<label>
+															<input name="label_trending_enable_cat_fallback" type="checkbox" id="label_trending_enable_cat_fallback" value="1" <?php checked( ! isset( $options['label_trending_enable_cat_fallback'] ) || ! empty( $options['label_trending_enable_cat_fallback'] ) ); ?> />
+															<strong><?php esc_html_e( 'Activer le repli par catégorie', 'woo-meta-catalog' ); ?></strong>
+														</label>
+														<p class="description" style="margin-top: 2px;">
+															<?php esc_html_e( 'Prend le relais avec les nouveautés de la catégorie si les articles N-1 ont été recréés.', 'woo-meta-catalog' ); ?>
+														</p>
+													</div>
+													<div id="trending-cat-fallback-options" style="<?php echo ( isset( $options['label_trending_enable_cat_fallback'] ) && empty( $options['label_trending_enable_cat_fallback'] ) ) ? 'display:none;' : ''; ?>">
+														<div style="margin-bottom: 8px;">
+															<label for="label_trending_cat_fallback_cap" style="font-size: 12px;"><?php esc_html_e( 'Plafond strict du repli (% de N) :', 'woo-meta-catalog' ); ?></label><br>
+															<input name="label_trending_cat_fallback_cap" type="number" min="0" max="100" id="label_trending_cat_fallback_cap" value="<?php echo esc_attr( $options['label_trending_cat_fallback_cap'] ?? 15 ); ?>" class="small-text" /> %
+														</div>
+														<div>
+															<label style="font-size: 12px; font-weight: 600;"><?php esc_html_e( 'Catégories exclues du repli :', 'woo-meta-catalog' ); ?></label><br>
+															<?php
+															$cats = get_terms( array( 'taxonomy' => 'product_cat', 'hide_empty' => false ) );
+															$def_cat = (int) get_option( 'default_product_cat' );
+															$excluded = isset( $options['label_trending_cat_fallback_excluded'] ) ? array_map( 'intval', (array) $options['label_trending_cat_fallback_excluded'] ) : array( $def_cat );
+															?>
+															<select name="label_trending_cat_fallback_excluded[]" multiple size="4" style="width: 100%; max-width: 320px; font-size: 12px;">
+																<?php if ( ! is_wp_error( $cats ) && ! empty( $cats ) ) : ?>
+																	<?php foreach ( $cats as $c ) : ?>
+																		<option value="<?php echo (int) $c->term_id; ?>" <?php echo in_array( (int) $c->term_id, $excluded, true ) ? 'selected' : ''; ?>>
+																			<?php echo esc_html( $c->name ); ?> (ID: <?php echo (int) $c->term_id; ?>)
+																		</option>
+																	<?php endforeach; ?>
+																<?php endif; ?>
+															</select>
+															<p class="description" style="font-size: 11px;">
+																<?php esc_html_e( 'Maintenez Ctrl (ou Cmd) pour sélectionner plusieurs catégories.', 'woo-meta-catalog' ); ?>
+															</p>
+														</div>
+													</div>
+												</div>
+
+												<!-- SECTION 5: CONDITIONS D'ÉLIGIBILITÉ (TOUTES SOURCES) -->
+												<div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px; grid-column: 1 / -1;">
+													<h5 style="margin: 0 0 10px 0; font-size: 13px; font-weight: 700; color: #1e293b;">
+														<span class="dashicons dashicons-filter" style="vertical-align: middle; color: #7c3aed;"></span> <?php esc_html_e( '5. Conditions d\'éligibilité requises (Toutes sources A, B1 & B2)', 'woo-meta-catalog' ); ?>
+													</h5>
+													<div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+														<div>
+															<label for="label_trending_min_price"><strong><?php esc_html_e( 'Prix effectif minimum (€) :', 'woo-meta-catalog' ); ?></strong></label><br>
+															<input name="label_trending_min_price" type="number" step="0.5" min="0" id="label_trending_min_price" value="<?php echo esc_attr( $options['label_trending_min_price'] ?? '8.0' ); ?>" class="small-text" /> €
+															<p class="description" style="margin-top: 2px; font-size: 11px;"><?php esc_html_e( 'Pour un produit variable, basé sur la variation en stock la moins chère.', 'woo-meta-catalog' ); ?></p>
+														</div>
+														<div>
+															<label for="label_trending_min_stock"><strong><?php esc_html_e( 'Stock minimum (unités) :', 'woo-meta-catalog' ); ?></strong></label><br>
+															<input name="label_trending_min_stock" type="number" min="1" id="label_trending_min_stock" value="<?php echo esc_attr( $options['label_trending_min_stock'] ?? 2 ); ?>" class="small-text" /> <?php esc_html_e( 'unités', 'woo-meta-catalog' ); ?>
+															<p class="description" style="margin-top: 2px; font-size: 11px;"><?php esc_html_e( 'Si le stock est géré, au moins ce nombre en stock.', 'woo-meta-catalog' ); ?></p>
+														</div>
+													</div>
+												</div>
+											</div>
+										</div>
+
+										<!-- TAG NAME (BOTH MODES) -->
+										<div style="margin-top: 10px; display: flex; align-items: center; gap: 10px;">
+											<label for="label_trending_tag"><strong><?php esc_html_e( 'Nom du marqueur dans le flux :', 'woo-meta-catalog' ); ?></strong></label>
 											<input name="label_trending_tag" type="text" id="label_trending_tag" value="<?php echo esc_attr( $options['label_trending_tag'] ?? 'tendance' ); ?>" class="regular-text" style="max-width: 160px;" />
 										</div>
+
+										<!-- PREVIEW & DIAGNOSTIC BOX -->
+										<?php $this->render_trending_preview_box(); ?>
 									</div>
-									<p class="description">
-										<?php esc_html_e( 'Identifie automatiquement les XX produits les plus vendus sur la période récente (par défaut les 35 produits les plus vendus des 45 derniers jours) qui sont actuellement en stock. Parfait pour créer un ensemble dynamique "Tendances" dans Meta Ads.', 'woo-meta-catalog' ); ?>
-									</p>
 								</td>
 							</tr>
 

@@ -846,7 +846,522 @@ class Feed_Item {
 	}
 
 	/**
-	 * Get product IDs identified as trending (most sold over the last X days, in stock).
+	 * Create or update the lightweight dedicated table for add-to-cart events.
+	 */
+	public static function maybe_create_atc_table() {
+		global $wpdb;
+		$table           = $wpdb->prefix . 'woo_meta_catalog_atc';
+		$charset_collate = $wpdb->get_charset_collate();
+
+		$sql = "CREATE TABLE {$table} (
+			id bigint(20) unsigned NOT NULL auto_increment,
+			product_id bigint(20) unsigned NOT NULL,
+			date date NOT NULL,
+			count int(11) unsigned NOT NULL default 1,
+			PRIMARY KEY  (id),
+			UNIQUE KEY product_date (product_id, date),
+			KEY date_idx (date)
+		) {$charset_collate};";
+
+		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+		dbDelta( $sql );
+	}
+
+	/**
+	 * Hook listener for WooCommerce add to cart.
+	 *
+	 * @param string $cart_item_key Cart item key.
+	 * @param int    $product_id    Product ID.
+	 * @param int    $quantity      Quantity added.
+	 * @param int    $variation_id  Variation ID if variable product.
+	 * @param array  $variation     Variation data.
+	 * @param array  $cart_item_data Other cart item data.
+	 */
+	public static function on_add_to_cart( $cart_item_key, $product_id, $quantity = 1, $variation_id = 0, $variation = array(), $cart_item_data = array() ) {
+		try {
+			$options = get_option( 'woo_meta_catalog_settings', array() );
+			if ( empty( $options['label_enable_trending'] ) || empty( $options['label_trending_enable_atc'] ) ) {
+				return;
+			}
+
+			$target_id = (int) $product_id;
+			if ( ! empty( $variation_id ) ) {
+				$parent_id = wp_get_post_parent_id( $variation_id );
+				if ( $parent_id > 0 ) {
+					$target_id = $parent_id;
+				}
+			}
+
+			if ( $target_id <= 0 ) {
+				return;
+			}
+
+			self::record_add_to_cart( $target_id );
+		} catch ( \Throwable $e ) {
+			// Fail-safe: never disrupt user checkout/cart flow.
+		}
+	}
+
+	/**
+	 * Record an add-to-cart event into dedicated lightweight table.
+	 *
+	 * @param int $product_id Parent product ID.
+	 */
+	public static function record_add_to_cart( $product_id ) {
+		global $wpdb;
+		$table = $wpdb->prefix . 'woo_meta_catalog_atc';
+		$today = current_time( 'Y-m-d' );
+
+		$result = $wpdb->query(
+			$wpdb->prepare(
+				"INSERT INTO {$table} (product_id, date, count)
+				 VALUES (%d, %s, 1)
+				 ON DUPLICATE KEY UPDATE count = count + 1",
+				$product_id,
+				$today
+			)
+		);
+
+		if ( false === $result && $wpdb->last_error && false !== strpos( $wpdb->last_error, "doesn't exist" ) ) {
+			self::maybe_create_atc_table();
+			$wpdb->query(
+				$wpdb->prepare(
+					"INSERT INTO {$table} (product_id, date, count)
+					 VALUES (%d, %s, 1)
+					 ON DUPLICATE KEY UPDATE count = count + 1",
+					$product_id,
+					$today
+				)
+			);
+		}
+	}
+
+	/**
+	 * Prune add-to-cart records older than X days.
+	 *
+	 * @param int $days Number of days to retain.
+	 */
+	public static function prune_old_atc_data( $days = 60 ) {
+		global $wpdb;
+		$table  = $wpdb->prefix . 'woo_meta_catalog_atc';
+		$cutoff = date( 'Y-m-d', current_time( 'timestamp' ) - ( $days * DAY_IN_SECONDS ) );
+
+		$exists = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
+		if ( $exists ) {
+			$wpdb->query( $wpdb->prepare( "DELETE FROM {$table} WHERE date < %s", $cutoff ) );
+		}
+	}
+
+	/**
+	 * Query aggregated add-to-cart counts by product ID since a cutoff date.
+	 *
+	 * @param string $cutoff_date_sql Cutoff date (Y-m-d).
+	 * @return array<int, int> Map of product_id => atc_total.
+	 */
+	public static function query_atc_totals( $cutoff_date_sql ) {
+		global $wpdb;
+		$table = $wpdb->prefix . 'woo_meta_catalog_atc';
+
+		$exists = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
+		if ( ! $exists ) {
+			return array();
+		}
+
+		$sql = $wpdb->prepare(
+			"SELECT product_id, SUM(count) AS total_atc
+			 FROM {$table}
+			 WHERE date >= %s
+			 GROUP BY product_id",
+			$cutoff_date_sql
+		);
+
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		if ( empty( $rows ) ) {
+			return array();
+		}
+
+		$map = array();
+		foreach ( $rows as $row ) {
+			$map[ (int) $row['product_id'] ] = (int) $row['total_atc'];
+		}
+
+		return $map;
+	}
+
+	/**
+	 * Query net sales quantities by parent product ID across a date range.
+	 *
+	 * @param string      $start_date_sql Start date Y-m-d H:i:s.
+	 * @param string|null $end_date_sql   End date Y-m-d H:i:s (optional).
+	 * @return array<int, array{product_id: int, net_sales: int}> List of rows.
+	 */
+	public static function query_net_sales( $start_date_sql, $end_date_sql = null ) {
+		global $wpdb;
+
+		$results = array();
+		$statuses = array( 'wc-completed', 'wc-processing', 'completed', 'processing' );
+		$placeholders = implode( ',', array_fill( 0, count( $statuses ), '%s' ) );
+
+		if ( self::has_order_lookup_table() ) {
+			$order_table = $wpdb->prefix . 'wc_order_product_lookup';
+			$stats_table = $wpdb->prefix . 'wc_order_stats';
+			$has_stats   = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $stats_table ) ) === $stats_table );
+
+			if ( $has_stats ) {
+				if ( $end_date_sql ) {
+					$sql = $wpdb->prepare(
+						"SELECT o.product_id, SUM(o.product_qty) AS net_sales
+						 FROM {$order_table} o
+						 INNER JOIN {$stats_table} s ON o.order_id = s.order_id
+						 WHERE o.date_created >= %s AND o.date_created <= %s
+						   AND s.status IN ($placeholders)
+						 GROUP BY o.product_id
+						 HAVING net_sales > 0
+						 ORDER BY net_sales DESC
+						 LIMIT 600",
+						array_merge( array( $start_date_sql, $end_date_sql ), $statuses )
+					);
+				} else {
+					$sql = $wpdb->prepare(
+						"SELECT o.product_id, SUM(o.product_qty) AS net_sales
+						 FROM {$order_table} o
+						 INNER JOIN {$stats_table} s ON o.order_id = s.order_id
+						 WHERE o.date_created >= %s
+						   AND s.status IN ($placeholders)
+						 GROUP BY o.product_id
+						 HAVING net_sales > 0
+						 ORDER BY net_sales DESC
+						 LIMIT 600",
+						array_merge( array( $start_date_sql ), $statuses )
+					);
+				}
+				$raw = $wpdb->get_results( $sql, ARRAY_A );
+				if ( ! empty( $raw ) ) {
+					foreach ( $raw as $r ) {
+						$results[] = array(
+							'product_id' => (int) $r['product_id'],
+							'net_sales'  => (int) $r['net_sales'],
+						);
+					}
+					return $results;
+				}
+			}
+		}
+
+		// Fallback: check if HPOS table wc_orders exists, else wp_posts.
+		$orders_table = $wpdb->prefix . 'wc_orders';
+		$has_hpos     = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $orders_table ) ) === $orders_table );
+
+		$order_items     = $wpdb->prefix . 'woocommerce_order_items';
+		$order_item_meta = $wpdb->prefix . 'woocommerce_order_itemmeta';
+
+		if ( $has_hpos ) {
+			$date_col = 'date_created_gmt';
+			if ( $end_date_sql ) {
+				$sql = $wpdb->prepare(
+					"SELECT CAST(p_meta.meta_value AS UNSIGNED) AS product_id,
+					        SUM(CAST(q_meta.meta_value AS SIGNED)) AS net_sales
+					 FROM {$order_items} oi
+					 INNER JOIN {$order_item_meta} p_meta ON oi.order_item_id = p_meta.order_item_id AND p_meta.meta_key = '_product_id'
+					 INNER JOIN {$order_item_meta} q_meta ON oi.order_item_id = q_meta.order_item_id AND q_meta.meta_key = '_qty'
+					 INNER JOIN {$orders_table} o ON oi.order_id = o.id
+					 WHERE o.status IN ($placeholders)
+					   AND o.{$date_col} >= %s AND o.{$date_col} <= %s
+					 GROUP BY product_id
+					 HAVING net_sales > 0
+					 ORDER BY net_sales DESC
+					 LIMIT 600",
+					array_merge( $statuses, array( $start_date_sql, $end_date_sql ) )
+				);
+			} else {
+				$sql = $wpdb->prepare(
+					"SELECT CAST(p_meta.meta_value AS UNSIGNED) AS product_id,
+					        SUM(CAST(q_meta.meta_value AS SIGNED)) AS net_sales
+					 FROM {$order_items} oi
+					 INNER JOIN {$order_item_meta} p_meta ON oi.order_item_id = p_meta.order_item_id AND p_meta.meta_key = '_product_id'
+					 INNER JOIN {$order_item_meta} q_meta ON oi.order_item_id = q_meta.order_item_id AND q_meta.meta_key = '_qty'
+					 INNER JOIN {$orders_table} o ON oi.order_id = o.id
+					 WHERE o.status IN ($placeholders)
+					   AND o.{$date_col} >= %s
+					 GROUP BY product_id
+					 HAVING net_sales > 0
+					 ORDER BY net_sales DESC
+					 LIMIT 600",
+					array_merge( $statuses, array( $start_date_sql ) )
+				);
+			}
+			$raw = $wpdb->get_results( $sql, ARRAY_A );
+			if ( ! empty( $raw ) ) {
+				foreach ( $raw as $r ) {
+					$results[] = array(
+						'product_id' => (int) $r['product_id'],
+						'net_sales'  => (int) $r['net_sales'],
+					);
+				}
+				return $results;
+			}
+		}
+
+		// Legacy wp_posts fallback.
+		if ( $end_date_sql ) {
+			$sql = $wpdb->prepare(
+				"SELECT CAST(p_meta.meta_value AS UNSIGNED) AS product_id,
+				        SUM(CAST(q_meta.meta_value AS SIGNED)) AS net_sales
+				 FROM {$order_items} oi
+				 INNER JOIN {$order_item_meta} p_meta ON oi.order_item_id = p_meta.order_item_id AND p_meta.meta_key = '_product_id'
+				 INNER JOIN {$order_item_meta} q_meta ON oi.order_item_id = q_meta.order_item_id AND q_meta.meta_key = '_qty'
+				 INNER JOIN {$wpdb->posts} o ON oi.order_id = o.ID
+				 WHERE o.post_type = 'shop_order'
+				   AND o.post_status IN ($placeholders)
+				   AND o.post_date_gmt >= %s AND o.post_date_gmt <= %s
+				 GROUP BY product_id
+				 HAVING net_sales > 0
+				 ORDER BY net_sales DESC
+				 LIMIT 600",
+				array_merge( $statuses, array( $start_date_sql, $end_date_sql ) )
+			);
+		} else {
+			$sql = $wpdb->prepare(
+				"SELECT CAST(p_meta.meta_value AS UNSIGNED) AS product_id,
+				        SUM(CAST(q_meta.meta_value AS SIGNED)) AS net_sales
+				 FROM {$order_items} oi
+				 INNER JOIN {$order_item_meta} p_meta ON oi.order_item_id = p_meta.order_item_id AND p_meta.meta_key = '_product_id'
+				 INNER JOIN {$order_item_meta} q_meta ON oi.order_item_id = q_meta.order_item_id AND q_meta.meta_key = '_qty'
+				 INNER JOIN {$wpdb->posts} o ON oi.order_id = o.ID
+				 WHERE o.post_type = 'shop_order'
+				   AND o.post_status IN ($placeholders)
+				   AND o.post_date_gmt >= %s
+				 GROUP BY product_id
+				 HAVING net_sales > 0
+				 ORDER BY net_sales DESC
+				 LIMIT 600",
+				array_merge( $statuses, array( $start_date_sql ) )
+			);
+		}
+		$raw = $wpdb->get_results( $sql, ARRAY_A );
+		if ( ! empty( $raw ) ) {
+			foreach ( $raw as $r ) {
+				$results[] = array(
+					'product_id' => (int) $r['product_id'],
+					'net_sales'  => (int) $r['net_sales'],
+				);
+			}
+		}
+
+		return $results;
+	}
+
+	/**
+	 * Find the deepest leaf category for a product, excluding blacklisted categories.
+	 *
+	 * @param int   $product_id    Product ID.
+	 * @param array $excluded_cats Array of excluded term IDs.
+	 * @return \WP_Term|null Leaf category term or null if none.
+	 */
+	public static function get_leaf_category( $product_id, $excluded_cats = array() ) {
+		$terms = wp_get_post_terms( (int) $product_id, 'product_cat' );
+		if ( is_wp_error( $terms ) || empty( $terms ) ) {
+			return null;
+		}
+
+		$filtered = array();
+		foreach ( $terms as $term ) {
+			if ( ! in_array( (int) $term->term_id, $excluded_cats, true ) ) {
+				$filtered[] = $term;
+			}
+		}
+
+		if ( empty( $filtered ) ) {
+			return null;
+		}
+
+		// Find terms that have no descendants among $filtered.
+		$leaves = array();
+		foreach ( $filtered as $term ) {
+			$is_parent_of_another = false;
+			foreach ( $filtered as $other ) {
+				if ( $term->term_id === $other->term_id ) {
+					continue;
+				}
+				$ancestors = get_ancestors( $other->term_id, 'product_cat', 'taxonomy' );
+				if ( in_array( (int) $term->term_id, array_map( 'intval', $ancestors ), true ) ) {
+					$is_parent_of_another = true;
+					break;
+				}
+			}
+			if ( ! $is_parent_of_another ) {
+				$ancestors = get_ancestors( $term->term_id, 'product_cat', 'taxonomy' );
+				$leaves[]  = array(
+					'term'  => $term,
+					'depth' => count( $ancestors ),
+				);
+			}
+		}
+
+		if ( empty( $leaves ) ) {
+			return $filtered[0];
+		}
+
+		// Sort by depth descending (deepest first).
+		usort( $leaves, function( $a, $b ) {
+			return $b['depth'] <=> $a['depth'];
+		} );
+
+		return $leaves[0]['term'];
+	}
+
+	/**
+	 * Check if a product satisfies all entry conditions for the trending marker.
+	 * Condition 4.2:
+	 * - Published, visible in catalog, stock_status = instock
+	 * - If managing stock, stock >= min_stock. For variable, at least 1 published variation in stock with stock >= min_stock (or unmanaged).
+	 * - Effective price >= min_price. For variable, based on cheapest eligible variation.
+	 *
+	 * @param int|\WC_Product $product_or_id Product instance or ID.
+	 * @param float           $min_price     Minimum effective price in €.
+	 * @param int             $min_stock     Minimum stock in units.
+	 * @return array{eligible: bool, id?: int, name?: string, price?: float, stock?: int|null, created_at?: int, thumb?: string, reason?: string}
+	 */
+	public static function check_product_eligibility( $product_or_id, $min_price = 8.0, $min_stock = 2 ) {
+		$product = is_numeric( $product_or_id ) ? wc_get_product( (int) $product_or_id ) : $product_or_id;
+		if ( ! $product instanceof \WC_Product ) {
+			return array( 'eligible' => false, 'reason' => 'invalid_product' );
+		}
+
+		// 1. Must be published.
+		if ( 'publish' !== $product->get_status() ) {
+			return array( 'eligible' => false, 'reason' => 'not_published' );
+		}
+
+		// 2. Visible in catalog.
+		$visibility = $product->get_catalog_visibility();
+		if ( 'hidden' === $visibility ) {
+			return array( 'eligible' => false, 'reason' => 'hidden' );
+		}
+
+		// 3. Overall stock status.
+		if ( 'instock' !== $product->get_stock_status() ) {
+			return array( 'eligible' => false, 'reason' => 'out_of_stock' );
+		}
+
+		$pid = (int) $product->get_id();
+
+		// Thumbnail.
+		$img_id = $product->get_image_id();
+		$thumb  = $img_id ? wp_get_attachment_image_url( $img_id, 'thumbnail' ) : ( function_exists( 'wc_placeholder_img_src' ) ? wc_placeholder_img_src( 'thumbnail' ) : '' );
+
+		// Creation timestamp.
+		$created_at = get_post_time( 'U', true, $pid );
+		if ( false === $created_at ) {
+			$created_at = 0;
+		}
+
+		// 4. Variable product.
+		if ( $product->is_type( 'variable' ) ) {
+			$children = $product->get_children();
+			if ( empty( $children ) ) {
+				return array( 'eligible' => false, 'reason' => 'no_variations' );
+			}
+
+			$eligible_variations = array();
+			foreach ( $children as $child_id ) {
+				$variation = wc_get_product( $child_id );
+				if ( ! $variation instanceof \WC_Product_Variation ) {
+					continue;
+				}
+				$v_status = $variation->get_status();
+				if ( 'publish' !== $v_status && 'private' !== $v_status ) {
+					continue;
+				}
+				if ( 'instock' !== $variation->get_stock_status() ) {
+					continue;
+				}
+
+				if ( $variation->managing_stock() ) {
+					$v_qty = $variation->get_stock_quantity();
+					if ( null !== $v_qty && $v_qty < $min_stock ) {
+						continue;
+					}
+					$v_stock = $v_qty;
+				} else {
+					if ( $product->managing_stock() ) {
+						$p_qty = $product->get_stock_quantity();
+						if ( null !== $p_qty && $p_qty < $min_stock ) {
+							continue;
+						}
+						$v_stock = $p_qty;
+					} else {
+						$v_stock = null; // Unmanaged stock.
+					}
+				}
+
+				$v_price = $variation->get_price();
+				if ( '' === $v_price || null === $v_price ) {
+					continue;
+				}
+
+				$eligible_variations[] = array(
+					'variation' => $variation,
+					'price'     => (float) $v_price,
+					'stock'     => $v_stock,
+				);
+			}
+
+			if ( empty( $eligible_variations ) ) {
+				return array( 'eligible' => false, 'reason' => 'no_stock_eligible_variations' );
+			}
+
+			// Sort by price ascending to find the cheapest eligible variation.
+			usort( $eligible_variations, function( $a, $b ) {
+				return $a['price'] <=> $b['price'];
+			} );
+
+			$cheapest = $eligible_variations[0];
+			if ( $cheapest['price'] < $min_price ) {
+				return array( 'eligible' => false, 'reason' => 'price_too_low', 'price' => $cheapest['price'] );
+			}
+
+			return array(
+				'eligible'   => true,
+				'id'         => $pid,
+				'name'       => $product->get_name(),
+				'price'      => $cheapest['price'],
+				'stock'      => $cheapest['stock'],
+				'created_at' => (int) $created_at,
+				'thumb'      => $thumb,
+			);
+		}
+
+		// 5. Simple product / Other single product.
+		if ( $product->managing_stock() ) {
+			$qty = $product->get_stock_quantity();
+			if ( null !== $qty && $qty < $min_stock ) {
+				return array( 'eligible' => false, 'reason' => 'insufficient_stock', 'stock' => $qty );
+			}
+			$stock_display = $qty;
+		} else {
+			$stock_display = null;
+		}
+
+		$price = $product->get_price();
+		if ( '' === $price || null === $price || (float) $price < $min_price ) {
+			return array( 'eligible' => false, 'reason' => 'price_too_low', 'price' => (float) $price );
+		}
+
+		return array(
+			'eligible'   => true,
+			'id'         => $pid,
+			'name'       => $product->get_name(),
+			'price'      => (float) $price,
+			'stock'      => $stock_display,
+			'created_at' => (int) $created_at,
+			'thumb'      => $thumb,
+		);
+	}
+
+	/**
+	 * Get product IDs identified as trending (map of [ ID => true ]).
+	 * Checks in-memory cache, then persistent option cache, then calculates.
 	 *
 	 * @param array $options Plugin settings.
 	 * @return array<int, bool> Map of trending IDs.
@@ -856,105 +1371,523 @@ class Feed_Item {
 			return self::$trending_ids_cache;
 		}
 
-		global $wpdb;
+		if ( empty( $options ) ) {
+			$options = get_option( 'woo_meta_catalog_settings', array() );
+		}
+
+		$mode = ! empty( $options['label_trending_mode'] ) ? $options['label_trending_mode'] : 'classic';
+
+		// Check persistent storage cache (valid for 26 hours).
+		$cache = get_option( 'woo_meta_catalog_trending_cache', null );
+		if ( is_array( $cache ) && ! empty( $cache['timestamp'] ) && ( time() - $cache['timestamp'] < 26 * HOUR_IN_SECONDS ) && ( $cache['mode'] ?? '' ) === $mode ) {
+			$ids = ! empty( $cache['ids'] ) && is_array( $cache['ids'] ) ? $cache['ids'] : array();
+			self::$trending_ids_cache = ! empty( $ids ) ? array_fill_keys( array_map( 'intval', $ids ), true ) : array();
+			return self::$trending_ids_cache;
+		}
+
+		// Otherwise calculate fresh.
+		return self::calculate_trending_ids( true, $options );
+	}
+
+	/**
+	 * Calculate trending IDs and update diagnostic data.
+	 *
+	 * @param bool  $save_cache Whether to update persistent storage option.
+	 * @param array $options    Plugin settings.
+	 * @return array<int, bool> Map of trending IDs.
+	 */
+	public static function calculate_trending_ids( $save_cache = true, $options = array() ) {
+		if ( empty( $options ) ) {
+			$options = get_option( 'woo_meta_catalog_settings', array() );
+		}
+
+		$mode = ! empty( $options['label_trending_mode'] ) ? $options['label_trending_mode'] : 'classic';
+
+		if ( 'seasonal' === $mode ) {
+			return self::calculate_seasonal_trending( $options, $save_cache );
+		}
+
+		return self::calculate_classic_trending( $options, $save_cache );
+	}
+
+	/**
+	 * Calculate classic trending products (top sales in last X days, in stock).
+	 *
+	 * @param array $options    Plugin settings.
+	 * @param bool  $save_cache Whether to update persistent cache.
+	 * @return array<int, bool> Map of trending IDs.
+	 */
+	public static function calculate_classic_trending( $options = array(), $save_cache = true ) {
+		if ( empty( $options ) ) {
+			$options = get_option( 'woo_meta_catalog_settings', array() );
+		}
+
 		$limit = ! empty( $options['label_trending_count'] ) ? max( 1, (int) $options['label_trending_count'] ) : 35;
 		$days  = ! empty( $options['label_trending_days'] ) ? max( 1, (int) $options['label_trending_days'] ) : 45;
 
 		$cutoff_date = date( 'Y-m-d H:i:s', current_time( 'timestamp' ) - ( $days * DAY_IN_SECONDS ) );
 
-		$lookup_table = $wpdb->prefix . 'wc_product_meta_lookup';
-		$has_lookup   = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $lookup_table ) ) === $lookup_table );
+		$rows = self::query_net_sales( $cutoff_date );
 
-		$ids = array();
+		// Filter for in-stock and up to limit.
+		$items = array();
+		$ids   = array();
 
-		if ( self::has_order_lookup_table() ) {
-			$order_table = $wpdb->prefix . 'wc_order_product_lookup';
-			$stats_table = $wpdb->prefix . 'wc_order_stats';
-			$has_stats   = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $stats_table ) ) === $stats_table );
+		foreach ( $rows as $r ) {
+			if ( count( $ids ) >= $limit ) {
+				break;
+			}
+			$pid = (int) $r['product_id'];
+			$p   = wc_get_product( $pid );
+			if ( ! $p || ! $p->is_in_stock() || 'publish' !== $p->get_status() ) {
+				continue;
+			}
 
-			if ( $has_lookup ) {
-				if ( $has_stats ) {
-					$sql = $wpdb->prepare(
-						"SELECT o.product_id
-						 FROM {$order_table} o
-						 INNER JOIN {$stats_table} s ON o.order_id = s.order_id
-						 INNER JOIN {$lookup_table} p ON o.product_id = p.product_id
-						 WHERE o.date_created >= %s
-						   AND s.status IN ('wc-completed', 'wc-processing')
-						   AND p.stock_status = 'instock'
-						 GROUP BY o.product_id
-						 HAVING SUM(o.product_qty) > 0
-						 ORDER BY SUM(o.product_qty) DESC
-						 LIMIT %d",
-						$cutoff_date,
-						$limit
-					);
-				} else {
-					$sql = $wpdb->prepare(
-						"SELECT o.product_id
-						 FROM {$order_table} o
-						 INNER JOIN {$lookup_table} p ON o.product_id = p.product_id
-						 WHERE o.date_created >= %s
-						   AND p.stock_status = 'instock'
-						 GROUP BY o.product_id
-						 HAVING SUM(o.product_qty) > 0
-						 ORDER BY SUM(o.product_qty) DESC
-						 LIMIT %d",
-						$cutoff_date,
-						$limit
+			$img_id = $p->get_image_id();
+			$thumb  = $img_id ? wp_get_attachment_image_url( $img_id, 'thumbnail' ) : ( function_exists( 'wc_placeholder_img_src' ) ? wc_placeholder_img_src( 'thumbnail' ) : '' );
+
+			$items[] = array(
+				'id'              => $pid,
+				'name'            => $p->get_name(),
+				'source'          => 'Classique',
+				'sales'           => (int) $r['net_sales'],
+				'atc'             => 0,
+				'score'           => (float) $r['net_sales'],
+				'price'           => (float) $p->get_price(),
+				'stock'           => $p->managing_stock() ? $p->get_stock_quantity() : null,
+				'thumb'           => $thumb,
+				'fallback_cat_id' => 0,
+				'fallback_cat'    => '',
+			);
+			$ids[] = $pid;
+		}
+
+		$cache_data = array(
+			'timestamp'     => time(),
+			'calculated_at' => wp_date( 'd/m/Y à H:i:s' ),
+			'mode'          => 'classic',
+			'total_count'   => count( $ids ),
+			'quota_a'       => $limit,
+			'quota_b'       => 0,
+			'count_a'       => count( $ids ),
+			'count_b1'      => 0,
+			'count_b2'      => 0,
+			'b2_cap'        => 0,
+			'b1_warning'    => false,
+			'items'         => $items,
+			'ids'           => array_map( 'intval', $ids ),
+		);
+
+		if ( $save_cache ) {
+			update_option( 'woo_meta_catalog_trending_cache', $cache_data, false );
+		}
+
+		self::$trending_ids_cache = ! empty( $ids ) ? array_fill_keys( array_map( 'intval', $ids ), true ) : array();
+		return self::$trending_ids_cache;
+	}
+
+	/**
+	 * Calculate seasonal trending products (Sources A, B1, B2 and Assemblage).
+	 *
+	 * @param array $options    Plugin settings.
+	 * @param bool  $save_cache Whether to update persistent storage cache.
+	 * @return array<int, bool> Map of trending IDs.
+	 */
+	public static function calculate_seasonal_trending( $options = array(), $save_cache = true ) {
+		if ( empty( $options ) ) {
+			$options = get_option( 'woo_meta_catalog_settings', array() );
+		}
+
+		$N                    = ! empty( $options['label_trending_count'] ) ? max( 1, (int) $options['label_trending_count'] ) : 60;
+		$recent_ratio         = isset( $options['label_trending_recent_ratio'] ) ? max( 0.0, min( 100.0, (float) $options['label_trending_recent_ratio'] ) ) : 60.0;
+		$recent_days          = ! empty( $options['label_trending_recent_days'] ) ? max( 1, (int) $options['label_trending_recent_days'] ) : 15;
+		$enable_atc           = ! empty( $options['label_trending_enable_atc'] );
+		$atc_weight           = isset( $options['label_trending_atc_weight'] ) ? max( 0.0, (float) $options['label_trending_atc_weight'] ) : 0.3;
+		$min_sales            = isset( $options['label_trending_min_sales'] ) ? max( 1, (int) $options['label_trending_min_sales'] ) : 2;
+		$min_atc              = isset( $options['label_trending_min_atc'] ) ? max( 1, (int) $options['label_trending_min_atc'] ) : 3;
+		$prev_days_before     = isset( $options['label_trending_prev_year_days_before'] ) ? max( 0, (int) $options['label_trending_prev_year_days_before'] ) : 5;
+		$prev_days_after      = isset( $options['label_trending_prev_year_days_after'] ) ? max( 0, (int) $options['label_trending_prev_year_days_after'] ) : 25;
+		$enable_cat_fallback  = ! isset( $options['label_trending_enable_cat_fallback'] ) || ! empty( $options['label_trending_enable_cat_fallback'] );
+		$cat_fallback_cap_pct = isset( $options['label_trending_cat_fallback_cap'] ) ? max( 0.0, min( 100.0, (float) $options['label_trending_cat_fallback_cap'] ) ) : 15.0;
+		$excluded_cats        = ! empty( $options['label_trending_cat_fallback_excluded'] ) ? array_map( 'intval', (array) $options['label_trending_cat_fallback_excluded'] ) : array( (int) get_option( 'default_product_cat' ) );
+		$min_price            = isset( $options['label_trending_min_price'] ) ? max( 0.0, (float) $options['label_trending_min_price'] ) : 8.0;
+		$min_stock            = isset( $options['label_trending_min_stock'] ) ? max( 1, (int) $options['label_trending_min_stock'] ) : 2;
+
+		// 1. Quotas.
+		$quota_a = (int) round( $N * ( $recent_ratio / 100.0 ) );
+		$quota_b = max( 0, $N - $quota_a );
+		$b2_cap  = (int) round( $N * ( $cat_fallback_cap_pct / 100.0 ) );
+
+		// 2. Prune old ATC data if ATC enabled.
+		if ( $enable_atc ) {
+			self::prune_old_atc_data( 60 );
+		}
+
+		$tz  = wp_timezone();
+		$now = new \DateTimeImmutable( 'now', $tz );
+
+		// -------------------------------------------------------------
+		// SOURCE A: Ventes récentes
+		// -------------------------------------------------------------
+		$recent_cutoff_dt = $now->modify( "-{$recent_days} days" )->setTime( 0, 0, 0 );
+		$recent_cutoff    = $recent_cutoff_dt->format( 'Y-m-d H:i:s' );
+		$recent_sales_raw = self::query_net_sales( $recent_cutoff );
+
+		$atc_map = array();
+		if ( $enable_atc ) {
+			$atc_map = self::query_atc_totals( $recent_cutoff_dt->format( 'Y-m-d' ) );
+		}
+
+		$recent_sales_map = array();
+		$candidates_a     = array();
+
+		foreach ( $recent_sales_raw as $row ) {
+			$pid   = (int) $row['product_id'];
+			$sales = (int) $row['net_sales'];
+			$recent_sales_map[ $pid ] = $sales;
+
+			$atc   = isset( $atc_map[ $pid ] ) ? (int) $atc_map[ $pid ] : 0;
+			$score = $sales + ( $enable_atc ? ( $atc_weight * $atc ) : 0.0 );
+
+			// Threshold: sales >= X OR (sales >= 1 AND atc >= Y).
+			$passes_threshold = ( $sales >= $min_sales ) || ( $sales >= 1 && $atc >= $min_atc );
+			if ( ! $passes_threshold ) {
+				continue;
+			}
+
+			// Condition 4.2 eligibility check.
+			$eligibility = self::check_product_eligibility( $pid, $min_price, $min_stock );
+			if ( ! $eligibility['eligible'] ) {
+				continue;
+			}
+
+			$candidates_a[ $pid ] = array(
+				'id'              => $pid,
+				'name'            => $eligibility['name'],
+				'sales'           => $sales,
+				'atc'             => $atc,
+				'score'           => round( $score, 2 ),
+				'price'           => $eligibility['price'],
+				'stock'           => $eligibility['stock'],
+				'created_at'      => $eligibility['created_at'],
+				'thumb'           => $eligibility['thumb'],
+				'source'          => 'A',
+				'fallback_cat_id' => 0,
+				'fallback_cat'    => '',
+			);
+		}
+
+		// Sort A: score DESC, sales DESC, created_at DESC.
+		uasort( $candidates_a, function( $x, $y ) {
+			if ( $y['score'] !== $x['score'] ) {
+				return ( $y['score'] > $x['score'] ) ? 1 : -1;
+			}
+			if ( $y['sales'] !== $x['sales'] ) {
+				return $y['sales'] <=> $x['sales'];
+			}
+			return $y['created_at'] <=> $x['created_at'];
+		} );
+
+		$selected_a             = array();
+		$remaining_candidates_a = array();
+		$all_selected_ids       = array();
+
+		foreach ( $candidates_a as $pid => $cand ) {
+			if ( count( $selected_a ) < $quota_a ) {
+				$selected_a[ $pid ]       = $cand;
+				$all_selected_ids[ $pid ] = true;
+			} else {
+				$remaining_candidates_a[ $pid ] = $cand;
+			}
+		}
+
+		// -------------------------------------------------------------
+		// SOURCE B: Même période l'année précédente
+		// -------------------------------------------------------------
+		$today     = $now->setTime( 0, 0, 0 );
+		$prev_year = (int) $today->format( 'Y' ) - 1;
+		$month     = (int) $today->format( 'm' );
+		$day       = (int) $today->format( 'd' );
+
+		// Robust leap year handling.
+		if ( 2 === $month && 29 === $day && ! checkdate( 2, 29, $prev_year ) ) {
+			$day = 28;
+		}
+
+		$one_year_ago = ( new \DateTimeImmutable( 'now', $tz ) )->setDate( $prev_year, $month, $day )->setTime( 0, 0, 0 );
+		$window_start = $one_year_ago->modify( "-{$prev_days_before} days" )->setTime( 0, 0, 0 );
+		$window_end   = $one_year_ago->modify( "+{$prev_days_after} days" )->setTime( 23, 59, 59 );
+
+		$b_sales_raw = self::query_net_sales( $window_start->format( 'Y-m-d H:i:s' ), $window_end->format( 'Y-m-d H:i:s' ) );
+
+		$candidates_b1        = array();
+		$ineligible_prev_year = array();
+
+		foreach ( $b_sales_raw as $row ) {
+			$pid   = (int) $row['product_id'];
+			$sales = (int) $row['net_sales'];
+
+			// Condition 4.2 check today.
+			$eligibility = self::check_product_eligibility( $pid, $min_price, $min_stock );
+
+			if ( $eligibility['eligible'] ) {
+				if ( ! isset( $all_selected_ids[ $pid ] ) ) {
+					$candidates_b1[ $pid ] = array(
+						'id'              => $pid,
+						'name'            => $eligibility['name'],
+						'sales'           => $sales,
+						'atc'             => 0,
+						'score'           => (float) $sales,
+						'price'           => $eligibility['price'],
+						'stock'           => $eligibility['stock'],
+						'created_at'      => $eligibility['created_at'],
+						'thumb'           => $eligibility['thumb'],
+						'source'          => 'B1',
+						'fallback_cat_id' => 0,
+						'fallback_cat'    => '',
 					);
 				}
-				$ids = $wpdb->get_col( $sql );
 			} else {
-				$sql = $wpdb->prepare(
-					"SELECT o.product_id
-					 FROM {$order_table} o
-					 INNER JOIN {$wpdb->postmeta} pm_stock ON o.product_id = pm_stock.post_id AND pm_stock.meta_key = '_stock_status'
-					 WHERE o.date_created >= %s
-					   AND pm_stock.meta_value = 'instock'
-					 GROUP BY o.product_id
-					 HAVING SUM(o.product_qty) > 0
-					 ORDER BY SUM(o.product_qty) DESC
-					 LIMIT %d",
-					$cutoff_date,
-					$limit
-				);
-				$ids = $wpdb->get_col( $sql );
-			}
-		} else {
-			// Fallback: standard WooCommerce order items tables.
-			$order_items     = $wpdb->prefix . 'woocommerce_order_items';
-			$order_item_meta = $wpdb->prefix . 'woocommerce_order_itemmeta';
-
-			if ( $has_lookup ) {
-				$sql = $wpdb->prepare(
-					"SELECT CAST(p_meta.meta_value AS UNSIGNED) AS product_id
-					 FROM {$order_items} oi
-					 INNER JOIN {$order_item_meta} p_meta ON oi.order_item_id = p_meta.order_item_id AND p_meta.meta_key = '_product_id'
-					 INNER JOIN {$order_item_meta} q_meta ON oi.order_item_id = q_meta.order_item_id AND q_meta.meta_key = '_qty'
-					 INNER JOIN {$lookup_table} p ON CAST(p_meta.meta_value AS UNSIGNED) = p.product_id
-					 INNER JOIN {$wpdb->posts} orders ON oi.order_id = orders.ID
-					 WHERE orders.post_type = 'shop_order'
-					   AND orders.post_status IN ('wc-completed', 'wc-processing')
-					   AND orders.post_date_gmt >= %s
-					   AND p.stock_status = 'instock'
-					 GROUP BY product_id
-					 HAVING SUM(CAST(q_meta.meta_value AS SIGNED)) > 0
-					 ORDER BY SUM(CAST(q_meta.meta_value AS SIGNED)) DESC
-					 LIMIT %d",
-					$cutoff_date,
-					$limit
-				);
-				$ids = $wpdb->get_col( $sql );
+				$ineligible_prev_year[ $pid ] = $sales;
 			}
 		}
 
-		if ( empty( $ids ) ) {
-			self::$trending_ids_cache = array();
-		} else {
-			self::$trending_ids_cache = array_fill_keys( array_map( 'intval', $ids ), true );
+		// Sort B1: sales DESC, created_at DESC.
+		uasort( $candidates_b1, function( $x, $y ) {
+			if ( $y['sales'] !== $x['sales'] ) {
+				return $y['sales'] <=> $x['sales'];
+			}
+			return $y['created_at'] <=> $x['created_at'];
+		} );
+
+		$selected_b1             = array();
+		$remaining_candidates_b1 = array();
+
+		foreach ( $candidates_b1 as $pid => $cand ) {
+			if ( count( $selected_b1 ) < $quota_b ) {
+				$selected_b1[ $pid ]      = $cand;
+				$all_selected_ids[ $pid ] = true;
+			} else {
+				$remaining_candidates_b1[ $pid ] = $cand;
+			}
 		}
 
+		// -------------------------------------------------------------
+		// SOURCE B2: Repli par catégorie (si B1 < quota B)
+		// -------------------------------------------------------------
+		$selected_b2         = array();
+		$category_candidates = array();
+		$cat_names           = array();
+		$sorted_cat_ids      = array();
+
+		$b2_needed = 0;
+		if ( $enable_cat_fallback && count( $selected_b1 ) < $quota_b ) {
+			$b2_needed = min( $b2_cap, $quota_b - count( $selected_b1 ) );
+		}
+
+		if ( $b2_needed > 0 && ! empty( $ineligible_prev_year ) ) {
+			$cat_sales = array();
+
+			foreach ( $ineligible_prev_year as $pid => $last_year_sales ) {
+				$leaf = self::get_leaf_category( $pid, $excluded_cats );
+				if ( $leaf instanceof \WP_Term ) {
+					$cid = (int) $leaf->term_id;
+					$cat_sales[ $cid ] = ( $cat_sales[ $cid ] ?? 0 ) + $last_year_sales;
+					$cat_names[ $cid ] = $leaf->name;
+				}
+			}
+
+			if ( ! empty( $cat_sales ) ) {
+				arsort( $cat_sales );
+				$sorted_cat_ids = array_keys( $cat_sales );
+
+				// Fetch eligible products for each category.
+				foreach ( $sorted_cat_ids as $cid ) {
+					$cat_prods = get_posts( array(
+						'post_type'      => 'product',
+						'post_status'    => 'publish',
+						'posts_per_page' => 40,
+						'orderby'        => 'date',
+						'order'          => 'DESC',
+						'fields'         => 'ids',
+						'tax_query'      => array(
+							array(
+								'taxonomy'         => 'product_cat',
+								'field'            => 'term_id',
+								'terms'            => $cid,
+								'include_children' => false,
+							),
+						),
+					) );
+
+					$c_candidates = array();
+					foreach ( $cat_prods as $c_pid ) {
+						$c_pid = (int) $c_pid;
+						if ( isset( $all_selected_ids[ $c_pid ] ) ) {
+							continue;
+						}
+						$check = self::check_product_eligibility( $c_pid, $min_price, $min_stock );
+						if ( ! $check['eligible'] ) {
+							continue;
+						}
+
+						$r_sales = isset( $recent_sales_map[ $c_pid ] ) ? $recent_sales_map[ $c_pid ] : 0;
+						$c_candidates[] = array(
+							'id'              => $c_pid,
+							'name'            => $check['name'],
+							'sales'           => $r_sales,
+							'atc'             => 0,
+							'score'           => (float) $r_sales,
+							'price'           => $check['price'],
+							'stock'           => $check['stock'],
+							'created_at'      => $check['created_at'],
+							'thumb'           => $check['thumb'],
+							'source'          => 'B2',
+							'fallback_cat_id' => $cid,
+							'fallback_cat'    => $cat_names[ $cid ],
+						);
+					}
+
+					// Sort within category: created_at DESC, then recent sales DESC.
+					usort( $c_candidates, function( $a, $b ) {
+						if ( $b['created_at'] !== $a['created_at'] ) {
+							return $b['created_at'] <=> $a['created_at'];
+						}
+						return $b['sales'] <=> $a['sales'];
+					} );
+
+					$category_candidates[ $cid ] = $c_candidates;
+				}
+
+				// Round-robin selection across categories.
+				while ( $b2_needed > 0 ) {
+					$added_in_round = 0;
+					foreach ( $sorted_cat_ids as $cid ) {
+						if ( $b2_needed <= 0 ) {
+							break 2;
+						}
+						if ( ! empty( $category_candidates[ $cid ] ) ) {
+							$cand = array_shift( $category_candidates[ $cid ] );
+							$pid  = (int) $cand['id'];
+							if ( isset( $all_selected_ids[ $pid ] ) ) {
+								continue;
+							}
+							$all_selected_ids[ $pid ] = true;
+							$selected_b2[ $pid ]       = $cand;
+							$b2_needed--;
+							$added_in_round++;
+						}
+					}
+					if ( 0 === $added_in_round ) {
+						break;
+					}
+				}
+			}
+		}
+
+		// -------------------------------------------------------------
+		// 4.5 ASSEMBLAGE & GESTION DES DÉBORDEMENTS (OVERFLOW)
+		// -------------------------------------------------------------
+		$count_b1 = count( $selected_b1 );
+		$count_b2 = count( $selected_b2 );
+		$total_b  = $count_b1 + $count_b2;
+
+		// Si B ne remplit pas son quota, les places restantes sont données à A.
+		if ( $total_b < $quota_b ) {
+			$unfilled_b = $quota_b - $total_b;
+			while ( $unfilled_b > 0 && ! empty( $remaining_candidates_a ) ) {
+				$cand = array_shift( $remaining_candidates_a );
+				$pid  = (int) $cand['id'];
+				if ( ! isset( $all_selected_ids[ $pid ] ) ) {
+					$all_selected_ids[ $pid ] = true;
+					$selected_a[ $pid ]       = $cand;
+					$unfilled_b--;
+				}
+			}
+		}
+
+		// Si A ne remplit pas son quota, les places restantes sont données à B (B1 puis B2 sous son plafond).
+		$count_a = count( $selected_a );
+		if ( $count_a < $quota_a ) {
+			$unfilled_a = $quota_a - $count_a;
+
+			// Remplissage via la suite de B1 d'abord.
+			while ( $unfilled_a > 0 && ! empty( $remaining_candidates_b1 ) ) {
+				$cand = array_shift( $remaining_candidates_b1 );
+				$pid  = (int) $cand['id'];
+				if ( ! isset( $all_selected_ids[ $pid ] ) ) {
+					$all_selected_ids[ $pid ] = true;
+					$selected_b1[ $pid ]      = $cand;
+					$unfilled_a--;
+				}
+			}
+
+			// Remplissage via B2 sous réserve de respecter le plafond strict de B2.
+			$b2_remaining_cap = $b2_cap - count( $selected_b2 );
+			$extra_b2_needed  = min( $unfilled_a, max( 0, $b2_remaining_cap ) );
+
+			if ( $extra_b2_needed > 0 && ! empty( $sorted_cat_ids ) && ! empty( $category_candidates ) ) {
+				while ( $extra_b2_needed > 0 ) {
+					$added_in_round = 0;
+					foreach ( $sorted_cat_ids as $cid ) {
+						if ( $extra_b2_needed <= 0 ) {
+							break 2;
+						}
+						if ( ! empty( $category_candidates[ $cid ] ) ) {
+							$cand = array_shift( $category_candidates[ $cid ] );
+							$pid  = (int) $cand['id'];
+							if ( isset( $all_selected_ids[ $pid ] ) ) {
+								continue;
+							}
+							$all_selected_ids[ $pid ] = true;
+							$selected_b2[ $pid ]       = $cand;
+							$extra_b2_needed--;
+							$added_in_round++;
+						}
+					}
+					if ( 0 === $added_in_round ) {
+						break;
+					}
+				}
+			}
+		}
+
+		// Assemblage final ordonné : A puis B1 puis B2.
+		$final_items = array();
+		foreach ( $selected_a as $pid => $item ) {
+			$final_items[ $pid ] = $item;
+		}
+		foreach ( $selected_b1 as $pid => $item ) {
+			$final_items[ $pid ] = $item;
+		}
+		foreach ( $selected_b2 as $pid => $item ) {
+			$final_items[ $pid ] = $item;
+		}
+
+		// Avertissement si B1 couvre moins de la moitié du quota B.
+		$b1_warning = ( count( $selected_b1 ) < ( $quota_b / 2 ) );
+
+		$cache_data = array(
+			'timestamp'     => time(),
+			'calculated_at' => wp_date( 'd/m/Y à H:i:s' ),
+			'mode'          => 'seasonal',
+			'total_count'   => count( $final_items ),
+			'quota_a'       => $quota_a,
+			'quota_b'       => $quota_b,
+			'count_a'       => count( $selected_a ),
+			'count_b1'      => count( $selected_b1 ),
+			'count_b2'      => count( $selected_b2 ),
+			'b2_cap'        => $b2_cap,
+			'b1_warning'    => $b1_warning,
+			'items'         => array_values( $final_items ),
+			'ids'           => array_map( 'intval', array_keys( $final_items ) ),
+		);
+
+		if ( $save_cache ) {
+			update_option( 'woo_meta_catalog_trending_cache', $cache_data, false );
+		}
+
+		self::$trending_ids_cache = ! empty( $final_items ) ? array_fill_keys( array_map( 'intval', array_keys( $final_items ) ), true ) : array();
 		return self::$trending_ids_cache;
 	}
 

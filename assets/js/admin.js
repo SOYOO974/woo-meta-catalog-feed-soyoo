@@ -480,6 +480,88 @@
 			});
 		});
 
+		// 10. Trending Settings & Realtime Recalculation
+		$('#label_enable_trending').on('change', function() {
+			if ($(this).is(':checked')) {
+				$('#woo-meta-trending-settings-wrap').slideDown(200);
+			} else {
+				$('#woo-meta-trending-settings-wrap').slideUp(200);
+			}
+		});
+
+		$('.trending-mode-radio').on('change', function() {
+			var mode = $('input[name="label_trending_mode"]:checked').val();
+			if (mode === 'seasonal') {
+				$('#trending-fields-classic').slideUp(150);
+				$('#trending-fields-seasonal').slideDown(200);
+			} else {
+				$('#trending-fields-seasonal').slideUp(150);
+				$('#trending-fields-classic').slideDown(200);
+			}
+		});
+
+		$('#label_trending_enable_atc').on('change', function() {
+			if ($(this).is(':checked')) {
+				$('#trending-atc-weight-wrap').slideDown(150);
+			} else {
+				$('#trending-atc-weight-wrap').slideUp(150);
+			}
+		});
+
+		$('#label_trending_enable_cat_fallback').on('change', function() {
+			if ($(this).is(':checked')) {
+				$('#trending-cat-fallback-options').slideDown(150);
+			} else {
+				$('#trending-cat-fallback-options').slideUp(150);
+			}
+		});
+
+		$('#label_trending_recent_ratio').on('input', function() {
+			var val = parseFloat($(this).val()) || 0;
+			var prevVal = Math.max(0, 100 - val);
+			$('#label_trending_prev_ratio_desc').text('Part période année N-1 : ' + Math.round(prevVal) + '%');
+		});
+
+		$(document).on('click', '#btn-recalculate-trending', function(e) {
+			e.preventDefault();
+			var $btn = $(this);
+			if ($btn.hasClass('loading')) {
+				return;
+			}
+
+			var $text = $btn.find('.btn-text');
+			var originalText = $text.text();
+
+			$btn.addClass('loading').prop('disabled', true);
+			$text.text('Recalcul en cours...');
+
+			$.ajax({
+				url: wooMetaCatalogVars.ajaxUrl,
+				type: 'POST',
+				dataType: 'json',
+				data: {
+					action: 'woo_meta_catalog_recalculate_trending',
+					security: wooMetaCatalogVars.nonce
+				},
+				success: function(response) {
+					$btn.removeClass('loading').prop('disabled', false);
+					$text.text(originalText);
+
+					if (response.success && response.data && response.data.html) {
+						$('#woo-meta-trending-preview-box').replaceWith(response.data.html);
+					} else {
+						var msg = (response.data && response.data.message) ? response.data.message : 'Erreur lors du recalcul des tendances.';
+						alert(msg);
+					}
+				},
+				error: function(xhr, status, error) {
+					$btn.removeClass('loading').prop('disabled', false);
+					$text.text(originalText);
+					alert('Erreur serveur lors du recalcul des tendances : ' + (error || status || 'Serveur indisponible'));
+				}
+			});
+		});
+
 		function escapeHtml(text) {
 			return $('<div>').text(text).html();
 		}
