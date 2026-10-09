@@ -59,7 +59,7 @@ Le flux produit respecte scrupuleusement la spécification **RSS 2.0 avec l'espa
 | `<g:brand>` | Marque issue de l'attribut produit configuré (`pa_marque`, `pa_brand`), ou nom du site en repli. |
 | `<g:item_group_id>` | Présent uniquement sur les variations, contenant l'identifiant du produit parent. |
 | `<g:product_type>` | Fil d'Ariane hiérarchique des catégories (ex: `Vêtements > Fille > Robes`). |
-| `<g:internal_label>` | Balises répétables pour chaque étiquette interne Meta (catégories, tags, promos, nouveautés, bestsellers), sans crochets ni guillemets parasites, permettant de filtrer les ensembles de produits dans Commerce Manager. |
+| `<g:internal_label>` | Balises répétables pour chaque étiquette interne Meta (catégories, tags, promos, nouveautés, bestsellers, tendances), sans crochets ni guillemets parasites, permettant de filtrer les ensembles de produits dans Commerce Manager. |
 | `<g:inventory>` | Quantité numérique en stock si la gestion des stocks est active. |
 
 ---

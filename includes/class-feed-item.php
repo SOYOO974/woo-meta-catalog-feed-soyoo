@@ -470,6 +470,13 @@ class Feed_Item {
 	protected static $bestseller_ids_cache = null;
 
 	/**
+	 * Cache for trending product IDs lookup map.
+	 *
+	 * @var array<int, bool>|null
+	 */
+	protected static $trending_ids_cache = null;
+
+	/**
 	 * Check if WooCommerce Analytics order lookup table exists.
 	 *
 	 * @return bool
@@ -587,11 +594,12 @@ class Feed_Item {
 	}
 
 	/**
-	 * Reset sales timestamp and bestseller cache.
+	 * Reset sales timestamp, bestseller and trending cache.
 	 */
 	public static function reset_sales_cache() {
 		self::$sales_timestamp_cache = array();
 		self::$bestseller_ids_cache   = null;
+		self::$trending_ids_cache     = null;
 	}
 
 	/**
@@ -674,42 +682,18 @@ class Feed_Item {
 		}
 
 		global $wpdb;
-		$mode  = ! empty( $options['label_bestseller_mode'] ) ? $options['label_bestseller_mode'] : 'count';
-		$value = isset( $options['label_bestseller_value'] ) ? (float) $options['label_bestseller_value'] : 50;
-
-		if ( $value <= 0 ) {
-			self::$bestseller_ids_cache = array();
-			return self::$bestseller_ids_cache;
+		if ( ! empty( $options['label_bestseller_count'] ) ) {
+			$limit = max( 1, (int) $options['label_bestseller_count'] );
+		} elseif ( ! empty( $options['label_bestseller_mode'] ) && 'percentage' === $options['label_bestseller_mode'] ) {
+			$limit = 100;
+		} elseif ( ! empty( $options['label_bestseller_value'] ) ) {
+			$limit = max( 1, (int) $options['label_bestseller_value'] );
+		} else {
+			$limit = 100;
 		}
 
 		$lookup_table = $wpdb->prefix . 'wc_product_meta_lookup';
 		$has_lookup   = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $lookup_table ) ) === $lookup_table );
-
-		$limit = 50;
-
-		if ( 'percentage' === $mode ) {
-			$percent = min( 100, max( 1, $value ) );
-			if ( $has_lookup ) {
-				$total_instock = (int) $wpdb->get_var(
-					"SELECT COUNT(DISTINCT product_id) FROM {$lookup_table} WHERE stock_status = 'instock'"
-				);
-			} else {
-				$total_instock = (int) $wpdb->get_var(
-					"SELECT COUNT(DISTINCT p.ID) FROM {$wpdb->posts} p
-					 INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = '_stock_status'
-					 WHERE p.post_type = 'product' AND p.post_status = 'publish' AND pm.meta_value = 'instock'"
-				);
-			}
-
-			if ( $total_instock <= 0 ) {
-				self::$bestseller_ids_cache = array();
-				return self::$bestseller_ids_cache;
-			}
-
-			$limit = max( 1, (int) round( ( $percent / 100 ) * $total_instock ) );
-		} else {
-			$limit = max( 1, (int) $value );
-		}
 
 		if ( $has_lookup ) {
 			$sql = $wpdb->prepare(
@@ -753,6 +737,10 @@ class Feed_Item {
 	 * @return bool
 	 */
 	public static function is_bestseller( $product, $parent = null, $options = array() ) {
+		if ( ! $product || ! is_a( $product, '\WC_Product' ) || ! $product->is_in_stock() ) {
+			return false;
+		}
+
 		$bestseller_map = self::get_bestseller_ids( $options );
 		if ( empty( $bestseller_map ) ) {
 			return false;
@@ -766,6 +754,152 @@ class Feed_Item {
 		if ( $parent ) {
 			$parent_id = (int) $parent->get_id();
 			if ( isset( $bestseller_map[ $parent_id ] ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Get product IDs identified as trending (most sold over the last X days, in stock).
+	 *
+	 * @param array $options Plugin settings.
+	 * @return array<int, bool> Map of trending IDs.
+	 */
+	public static function get_trending_ids( $options = array() ) {
+		if ( null !== self::$trending_ids_cache ) {
+			return self::$trending_ids_cache;
+		}
+
+		global $wpdb;
+		$limit = ! empty( $options['label_trending_count'] ) ? max( 1, (int) $options['label_trending_count'] ) : 35;
+		$days  = ! empty( $options['label_trending_days'] ) ? max( 1, (int) $options['label_trending_days'] ) : 45;
+
+		$cutoff_date = date( 'Y-m-d H:i:s', current_time( 'timestamp' ) - ( $days * DAY_IN_SECONDS ) );
+
+		$lookup_table = $wpdb->prefix . 'wc_product_meta_lookup';
+		$has_lookup   = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $lookup_table ) ) === $lookup_table );
+
+		$ids = array();
+
+		if ( self::has_order_lookup_table() ) {
+			$order_table = $wpdb->prefix . 'wc_order_product_lookup';
+			$stats_table = $wpdb->prefix . 'wc_order_stats';
+			$has_stats   = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $stats_table ) ) === $stats_table );
+
+			if ( $has_lookup ) {
+				if ( $has_stats ) {
+					$sql = $wpdb->prepare(
+						"SELECT o.product_id
+						 FROM {$order_table} o
+						 INNER JOIN {$stats_table} s ON o.order_id = s.order_id
+						 INNER JOIN {$lookup_table} p ON o.product_id = p.product_id
+						 WHERE o.date_created >= %s
+						   AND s.status IN ('wc-completed', 'wc-processing')
+						   AND p.stock_status = 'instock'
+						 GROUP BY o.product_id
+						 HAVING SUM(o.product_qty) > 0
+						 ORDER BY SUM(o.product_qty) DESC
+						 LIMIT %d",
+						$cutoff_date,
+						$limit
+					);
+				} else {
+					$sql = $wpdb->prepare(
+						"SELECT o.product_id
+						 FROM {$order_table} o
+						 INNER JOIN {$lookup_table} p ON o.product_id = p.product_id
+						 WHERE o.date_created >= %s
+						   AND p.stock_status = 'instock'
+						 GROUP BY o.product_id
+						 HAVING SUM(o.product_qty) > 0
+						 ORDER BY SUM(o.product_qty) DESC
+						 LIMIT %d",
+						$cutoff_date,
+						$limit
+					);
+				}
+				$ids = $wpdb->get_col( $sql );
+			} else {
+				$sql = $wpdb->prepare(
+					"SELECT o.product_id
+					 FROM {$order_table} o
+					 INNER JOIN {$wpdb->postmeta} pm_stock ON o.product_id = pm_stock.post_id AND pm_stock.meta_key = '_stock_status'
+					 WHERE o.date_created >= %s
+					   AND pm_stock.meta_value = 'instock'
+					 GROUP BY o.product_id
+					 HAVING SUM(o.product_qty) > 0
+					 ORDER BY SUM(o.product_qty) DESC
+					 LIMIT %d",
+					$cutoff_date,
+					$limit
+				);
+				$ids = $wpdb->get_col( $sql );
+			}
+		} else {
+			// Fallback: standard WooCommerce order items tables.
+			$order_items     = $wpdb->prefix . 'woocommerce_order_items';
+			$order_item_meta = $wpdb->prefix . 'woocommerce_order_itemmeta';
+
+			if ( $has_lookup ) {
+				$sql = $wpdb->prepare(
+					"SELECT CAST(p_meta.meta_value AS UNSIGNED) AS product_id
+					 FROM {$order_items} oi
+					 INNER JOIN {$order_item_meta} p_meta ON oi.order_item_id = p_meta.order_item_id AND p_meta.meta_key = '_product_id'
+					 INNER JOIN {$order_item_meta} q_meta ON oi.order_item_id = q_meta.order_item_id AND q_meta.meta_key = '_qty'
+					 INNER JOIN {$lookup_table} p ON CAST(p_meta.meta_value AS UNSIGNED) = p.product_id
+					 INNER JOIN {$wpdb->posts} orders ON oi.order_id = orders.ID
+					 WHERE orders.post_type = 'shop_order'
+					   AND orders.post_status IN ('wc-completed', 'wc-processing')
+					   AND orders.post_date_gmt >= %s
+					   AND p.stock_status = 'instock'
+					 GROUP BY product_id
+					 HAVING SUM(CAST(q_meta.meta_value AS SIGNED)) > 0
+					 ORDER BY SUM(CAST(q_meta.meta_value AS SIGNED)) DESC
+					 LIMIT %d",
+					$cutoff_date,
+					$limit
+				);
+				$ids = $wpdb->get_col( $sql );
+			}
+		}
+
+		if ( empty( $ids ) ) {
+			self::$trending_ids_cache = array();
+		} else {
+			self::$trending_ids_cache = array_fill_keys( array_map( 'intval', $ids ), true );
+		}
+
+		return self::$trending_ids_cache;
+	}
+
+	/**
+	 * Check if a product or its parent is identified as trending.
+	 *
+	 * @param \WC_Product      $product Current product or variation.
+	 * @param \WC_Product|null $parent  Parent product if variation.
+	 * @param array            $options Plugin settings.
+	 * @return bool
+	 */
+	public static function is_trending( $product, $parent = null, $options = array() ) {
+		if ( ! $product || ! is_a( $product, '\WC_Product' ) || ! $product->is_in_stock() ) {
+			return false;
+		}
+
+		$trending_map = self::get_trending_ids( $options );
+		if ( empty( $trending_map ) ) {
+			return false;
+		}
+
+		$pid = (int) $product->get_id();
+		if ( isset( $trending_map[ $pid ] ) ) {
+			return true;
+		}
+
+		if ( $parent ) {
+			$parent_id = (int) $parent->get_id();
+			if ( isset( $trending_map[ $parent_id ] ) ) {
 				return true;
 			}
 		}
@@ -831,6 +965,14 @@ class Feed_Item {
 			if ( self::is_bestseller( $product, $parent, $options ) ) {
 				$bestseller_tag = ! empty( $options['label_bestseller_tag'] ) ? $options['label_bestseller_tag'] : 'bestseller';
 				$labels[]       = $bestseller_tag;
+			}
+		}
+
+		// 6. Trending flag (most sold in last X days, in stock).
+		if ( ! empty( $options['label_enable_trending'] ) ) {
+			if ( self::is_trending( $product, $parent, $options ) ) {
+				$trending_tag = ! empty( $options['label_trending_tag'] ) ? $options['label_trending_tag'] : 'tendance';
+				$labels[]     = $trending_tag;
 			}
 		}
 

@@ -3,7 +3,7 @@
  * Plugin Name:       Woo Meta Catalog Feed Soyoo
  * Plugin URI:        https://github.com/SOYOO974/woo-meta-catalog-feed-soyoo/
  * Description:       Générateur de flux catalogue XML haute performance, ultra-léger et autonome pour Meta Ads (Commerce Manager, Advantage+ Catalog Ads, retargeting DPA) et Google Shopping.
- * Version:           1.5.2
+ * Version:           1.6.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            SOYOO
@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin constants.
-define( 'WOO_META_CATALOG_FEED_VERSION', '1.5.2' );
+define( 'WOO_META_CATALOG_FEED_VERSION', '1.6.0' );
 define( 'WOO_META_CATALOG_FEED_FILE', __FILE__ );
 define( 'WOO_META_CATALOG_FEED_DIR', plugin_dir_path( __FILE__ ) );
 define( 'WOO_META_CATALOG_FEED_URL', plugin_dir_url( __FILE__ ) );
@@ -82,9 +82,12 @@ function woo_meta_catalog_feed_activate() {
 		'label_new_days'           => 30,
 		'label_new_tag'            => 'nouveaute',
 		'label_enable_bestseller'  => 0,
-		'label_bestseller_mode'    => 'count',
-		'label_bestseller_value'   => 50,
+		'label_bestseller_count'   => 100,
 		'label_bestseller_tag'     => 'bestseller',
+		'label_enable_trending'    => 0,
+		'label_trending_count'     => 35,
+		'label_trending_days'      => 45,
+		'label_trending_tag'       => 'tendance',
 	);
 
 	$existing = get_option( 'woo_meta_catalog_settings', array() );

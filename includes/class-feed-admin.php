@@ -388,9 +388,13 @@ class Feed_Admin {
 			'label_new_days'           => max( 1, intval( $_POST['label_new_days'] ?? 30 ) ),
 			'label_new_tag'            => sanitize_text_field( wp_unslash( $_POST['label_new_tag'] ?? 'nouveaute' ) ),
 			'label_enable_bestseller'  => isset( $_POST['label_enable_bestseller'] ) ? 1 : 0,
-			'label_bestseller_mode'    => ( isset( $_POST['label_bestseller_mode'] ) && 'percentage' === $_POST['label_bestseller_mode'] ) ? 'percentage' : 'count',
-			'label_bestseller_value'   => max( 1, intval( $_POST['label_bestseller_value'] ?? 50 ) ),
+			'label_bestseller_count'   => max( 1, intval( $_POST['label_bestseller_count'] ?? ( $_POST['label_bestseller_value'] ?? 100 ) ) ),
+			'label_bestseller_value'   => max( 1, intval( $_POST['label_bestseller_count'] ?? ( $_POST['label_bestseller_value'] ?? 100 ) ) ),
 			'label_bestseller_tag'     => sanitize_text_field( wp_unslash( $_POST['label_bestseller_tag'] ?? 'bestseller' ) ),
+			'label_enable_trending'    => isset( $_POST['label_enable_trending'] ) ? 1 : 0,
+			'label_trending_count'     => max( 1, intval( $_POST['label_trending_count'] ?? 35 ) ),
+			'label_trending_days'      => max( 1, intval( $_POST['label_trending_days'] ?? 45 ) ),
+			'label_trending_tag'       => sanitize_text_field( wp_unslash( $_POST['label_trending_tag'] ?? 'tendance' ) ),
 		);
 
 		update_option( 'woo_meta_catalog_settings', $settings );
@@ -931,15 +935,13 @@ class Feed_Admin {
 									</label>
 									<div style="margin-top: 8px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
 										<div>
-											<label for="label_bestseller_mode"><?php esc_html_e( 'Mode de calcul :', 'woo-meta-catalog' ); ?></label>
-											<select name="label_bestseller_mode" id="label_bestseller_mode">
-												<option value="count" <?php selected( ( $options['label_bestseller_mode'] ?? 'count' ), 'count' ); ?>><?php esc_html_e( 'Nombre fixe de produits', 'woo-meta-catalog' ); ?></option>
-												<option value="percentage" <?php selected( ( $options['label_bestseller_mode'] ?? 'count' ), 'percentage' ); ?>><?php esc_html_e( 'Pourcentage des produits en stock (%)', 'woo-meta-catalog' ); ?></option>
-											</select>
-										</div>
-										<div>
-											<label for="label_bestseller_value"><?php esc_html_e( 'Valeur (Top N ou %) :', 'woo-meta-catalog' ); ?></label>
-											<input name="label_bestseller_value" type="number" min="1" id="label_bestseller_value" value="<?php echo esc_attr( $options['label_bestseller_value'] ?? 50 ); ?>" class="small-text" />
+											<?php
+											$bestseller_count = ! empty( $options['label_bestseller_count'] )
+												? (int) $options['label_bestseller_count']
+												: ( ( isset( $options['label_bestseller_mode'] ) && 'percentage' === $options['label_bestseller_mode'] ) ? 100 : ( $options['label_bestseller_value'] ?? 100 ) );
+											?>
+											<label for="label_bestseller_count"><?php esc_html_e( 'Nombre de produits (Top N) :', 'woo-meta-catalog' ); ?></label>
+											<input name="label_bestseller_count" type="number" min="1" id="label_bestseller_count" value="<?php echo esc_attr( $bestseller_count ); ?>" class="small-text" />
 										</div>
 										<div>
 											<label for="label_bestseller_tag"><?php esc_html_e( 'Nom du marqueur :', 'woo-meta-catalog' ); ?></label>
@@ -947,7 +949,35 @@ class Feed_Admin {
 										</div>
 									</div>
 									<p class="description">
-										<?php esc_html_e( 'Identifie automatiquement les produits en stock ayant le plus grand volume de ventes historiques (total_sales > 0) et leur applique l\'étiquette bestseller. Idéal pour cibler vos bestsellers en Advantage+ Catalog Ads.', 'woo-meta-catalog' ); ?>
+										<?php esc_html_e( 'Identifie automatiquement les N produits en stock ayant le plus grand volume de ventes historiques (total_sales > 0) et leur applique l\'étiquette bestseller. Idéal pour cibler vos bestsellers en Advantage+ Catalog Ads.', 'woo-meta-catalog' ); ?>
+									</p>
+								</td>
+							</tr>
+
+							<!-- TRENDING FLAG -->
+							<tr>
+								<th scope="row"><?php esc_html_e( 'Marqueur Tendance', 'woo-meta-catalog' ); ?></th>
+								<td>
+									<label for="label_enable_trending">
+										<input name="label_enable_trending" type="checkbox" id="label_enable_trending" value="1" <?php checked( ! empty( $options['label_enable_trending'] ) ); ?> />
+										<?php esc_html_e( 'Ajouter automatiquement un marqueur pour les produits tendance (ventes récentes)', 'woo-meta-catalog' ); ?>
+									</label>
+									<div style="margin-top: 8px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+										<div>
+											<label for="label_trending_count"><?php esc_html_e( 'Nombre de produits (Top N) :', 'woo-meta-catalog' ); ?></label>
+											<input name="label_trending_count" type="number" min="1" id="label_trending_count" value="<?php echo esc_attr( $options['label_trending_count'] ?? 35 ); ?>" class="small-text" />
+										</div>
+										<div>
+											<label for="label_trending_days"><?php esc_html_e( 'Ventes des derniers :', 'woo-meta-catalog' ); ?></label>
+											<input name="label_trending_days" type="number" min="1" max="365" id="label_trending_days" value="<?php echo esc_attr( $options['label_trending_days'] ?? 45 ); ?>" class="small-text" /> <?php esc_html_e( 'jours', 'woo-meta-catalog' ); ?>
+										</div>
+										<div>
+											<label for="label_trending_tag"><?php esc_html_e( 'Nom du marqueur :', 'woo-meta-catalog' ); ?></label>
+											<input name="label_trending_tag" type="text" id="label_trending_tag" value="<?php echo esc_attr( $options['label_trending_tag'] ?? 'tendance' ); ?>" class="regular-text" style="max-width: 160px;" />
+										</div>
+									</div>
+									<p class="description">
+										<?php esc_html_e( 'Identifie automatiquement les XX produits les plus vendus sur la période récente (par défaut les 35 produits les plus vendus des 45 derniers jours) qui sont actuellement en stock. Parfait pour créer un ensemble dynamique "Tendances" dans Meta Ads.', 'woo-meta-catalog' ); ?>
 									</p>
 								</td>
 							</tr>
