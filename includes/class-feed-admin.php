@@ -393,6 +393,7 @@ class Feed_Admin {
 		}
 
 		$settings = array(
+			'id_format'               => isset( $_POST['id_format'] ) && in_array( $_POST['id_format'], array( 'id', 'sku' ), true ) ? sanitize_text_field( wp_unslash( $_POST['id_format'] ) ) : 'id',
 			'exclude_hidden'          => isset( $_POST['exclude_hidden'] ) ? 1 : 0,
 			'exclude_dead_stock_days' => max( 0, intval( $_POST['exclude_dead_stock_days'] ?? 0 ) ),
 			'exclude_out_of_stock'    => isset( $_POST['exclude_out_of_stock'] ) ? 1 : 0,
@@ -672,6 +673,22 @@ class Feed_Admin {
 
 					<table class="form-table" role="presentation">
 						<tbody>
+							<!-- ID FORMAT (CONTENT ID RESOLUTION) -->
+							<tr>
+								<th scope="row">
+									<label for="id_format"><?php esc_html_e( 'Format des identifiants (<g:id>)', 'woo-meta-catalog' ); ?></label>
+								</th>
+								<td>
+									<select name="id_format" id="id_format">
+										<option value="id" <?php selected( $options['id_format'] ?? 'id', 'id' ); ?>><?php esc_html_e( 'ID produit WooCommerce (recommandé)', 'woo-meta-catalog' ); ?></option>
+										<option value="sku" <?php selected( $options['id_format'] ?? 'id', 'sku' ); ?>><?php esc_html_e( 'SKU avec repli sur ID', 'woo-meta-catalog' ); ?></option>
+									</select>
+									<p class="description">
+										<?php esc_html_e( 'Définit la valeur de la balise <g:id> transmise dans le flux XML et partagée avec l\'extension woo-fb-tracking-server-side. L\'option « ID produit » garantit un alignement universel à 100 % même si certains produits ont un SKU dans WooCommerce.', 'woo-meta-catalog' ); ?>
+									</p>
+								</td>
+							</tr>
+
 							<!-- EXCLUDE HIDDEN PRODUCTS -->
 							<tr>
 								<th scope="row"><?php esc_html_e( 'Visibilité catalogue', 'woo-meta-catalog' ); ?></th>

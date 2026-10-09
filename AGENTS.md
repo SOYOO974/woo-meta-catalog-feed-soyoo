@@ -69,9 +69,9 @@ Dès qu'une modification, correction de bug ou amélioration est apportée à ce
 > [!CRITICAL]
 > **Le flux catalogue est la SOURCE DE VÉRITÉ UNIQUE des ID Meta.** `woo-fb-tracking-server-side` (v2.1.0+, mode « auto ») ne calcule plus ses `content_ids` : il les demande au flux. Toute divergence fait chuter le taux de correspondance catalogue Meta à 0 % sans alerte côté Meta.
 
-- **Méthode unique** : `\SOYOO\MetaCatalog\Feed_Item::get_content_id( \WC_Product $product ) : string`
-  - Produit simple / externe : `get_sku()` sinon `get_id()`.
-  - Variation : `get_sku( 'edit' )` (SKU propre, sans héritage parent) sinon ID de la variation → aucun `<g:id>` en double.
+- **Méthode unique** : `\SOYOO\MetaCatalog\Feed_Item::get_content_id( \WC_Product $product, $format = null ) : string`
+  - Mode 'id' (défaut, recommandé depuis v1.8.0) : renvoie directement le Post ID WooCommerce (`(string) $product->get_id()`), garantissant 100% d'alignement universel même en présence de SKU isolés.
+  - Mode 'sku' : SKU si défini, sinon Post ID (`get_sku( 'edit' )` propre sans héritage pour les variations).
   - Utilisée par `Feed_Item::build()` pour `<g:id>`. **Interdiction de recalculer l'ID ailleurs.**
 - **Filtre exposé (API publique, ne jamais renommer ni changer la signature)** : `soyoo_meta_catalog_content_id( $id, \WC_Product $product )`, enregistré dans `woo_meta_catalog_feed_init()`. Consommé par `\WFBT\Product_Id::get()` via `apply_filters( 'soyoo_meta_catalog_content_id', null, $product )`.
 - **Filtre de personnalisation** : `woo_meta_catalog_item_id( $id, $product )`, appliqué DANS `get_content_id()` → le flux ET le tracking suivent.

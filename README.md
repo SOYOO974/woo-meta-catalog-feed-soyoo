@@ -46,7 +46,7 @@ Le flux produit respecte scrupuleusement la spécification **RSS 2.0 avec l'espa
 
 | Balise XML | Description & Logique |
 | :--- | :--- |
-| `<g:id>` | `Feed_Item::get_content_id()` : SKU si défini, sinon Post ID ; variations : SKU propre sinon ID de variation. Partagé avec le tracking CAPI. |
+| `<g:id>` | `Feed_Item::get_content_id()` : ID produit WooCommerce (par défaut, recommandé) ou SKU avec repli sur ID selon réglage `id_format`. Partagé avec le tracking CAPI. |
 | `<g:title>` | Titre nettoyé du produit (ou Titre Parent + Attributs pour les variations). |
 | `<g:description>` | Extrait court (ou description longue tronquée à 5 000 car.), balises HTML nettoyées. |
 | `<g:link>` | URL canonique HTTPS avec balisage UTM paramétrable (`utm_source=facebook&utm_medium=catalog`). |
@@ -136,6 +136,11 @@ Consommé par `woo-fb-tracking-server-side` v2.1.0+ (mode « auto ») : `apply_f
 ---
 
 ## 📝 Changelog
+
+### 1.8.0
+- Ajout du réglage `id_format` dans l'administration WooCommerce ('id' => 'ID produit WooCommerce (recommandé)', 'sku' => 'SKU avec repli sur ID') avec persistance dans `woo_meta_catalog_settings`.
+- `Feed_Item::get_content_id()` utilise désormais l'option `id_format` (valeur par défaut : 'id' = Post ID WooCommerce).
+- Résout les désalignements constatés sur les boutiques (ex. KidShow.fr) indexées sur les Post IDs où quelques rares produits possèdent un SKU sans que le catalogue ne doive basculer en SKU.
 
 ### 1.3.0
 - Le flux devient la source de vérité unique des ID Meta : nouvelle méthode `Feed_Item::get_content_id()` + filtre exposé `soyoo_meta_catalog_content_id` (consommé par `woo-fb-tracking-server-side` v2.1.0+).

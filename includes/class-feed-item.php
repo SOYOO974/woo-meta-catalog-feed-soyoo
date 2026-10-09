@@ -54,7 +54,8 @@ class Feed_Item {
 
 		// 2. Critical CAPI ID alignment: single source of truth shared with
 		// woo-fb-tracking-server-side through the `soyoo_meta_catalog_content_id` filter.
-		$id = self::get_content_id( $product );
+		$id_format = isset( $options['id_format'] ) ? $options['id_format'] : null;
+		$id        = self::get_content_id( $product, $id_format );
 
 		// 3. Images.
 		$image_id = $product->get_image_id();
@@ -256,17 +257,25 @@ class Feed_Item {
 	 * reads this value through the `soyoo_meta_catalog_content_id` filter for its
 	 * content_ids (Pixel + CAPI). Any change here is automatically followed by the tracking.
 	 *
-	 * - Simple / external products: SKU if defined, otherwise Post ID.
-	 * - Variations: OWN SKU only (`get_sku( 'edit' )`, no inheritance from the parent SKU),
-	 *   otherwise the variation ID. Prevents several variations sharing the parent SKU
-	 *   as <g:id> (duplicates rejected by Meta).
+	 * - 'id' (default, recommended): strictly uses WooCommerce Product ID ((string) $product->get_id()).
+	 * - 'sku': SKU if defined, otherwise Post ID (for variations: own SKU only, no inheritance).
 	 *
 	 * @param \WC_Product $product Product or variation.
+	 * @param string|null $format  Optional format ('id' or 'sku'). Defaults to 'id_format' option or 'id'.
 	 * @return string
 	 */
-	public static function get_content_id( \WC_Product $product ): string {
-		$sku = $product->is_type( 'variation' ) ? $product->get_sku( 'edit' ) : $product->get_sku();
-		$id  = ( '' !== (string) $sku ) ? (string) $sku : (string) $product->get_id();
+	public static function get_content_id( \WC_Product $product, $format = null ): string {
+		if ( null === $format ) {
+			$settings = get_option( 'woo_meta_catalog_settings', array() );
+			$format   = ! empty( $settings['id_format'] ) ? $settings['id_format'] : 'id';
+		}
+
+		if ( 'sku' === $format ) {
+			$sku = $product->is_type( 'variation' ) ? $product->get_sku( 'edit' ) : $product->get_sku();
+			$id  = ( '' !== (string) $sku ) ? (string) $sku : (string) $product->get_id();
+		} else {
+			$id = (string) $product->get_id();
+		}
 
 		/**
 		 * Filters the catalog item ID (custom per-site formats).
