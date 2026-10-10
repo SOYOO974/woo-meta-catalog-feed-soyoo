@@ -944,8 +944,19 @@ class Feed_Item {
 	public static function on_add_to_cart( $cart_item_key, $product_id, $quantity = 1, $variation_id = 0, $variation = array(), $cart_item_data = array() ) {
 		try {
 			$options = get_option( 'woo_meta_catalog_settings', array() );
-			if ( empty( $options['label_enable_trending'] ) || empty( $options['label_trending_enable_atc'] ) ) {
+			if ( empty( $options['label_enable_trending'] ) ) {
 				return;
+			}
+
+			$mode = ! empty( $options['label_trending_mode'] ) ? $options['label_trending_mode'] : 'classic';
+			if ( 'seasonal' === $mode ) {
+				if ( empty( $options['label_trending_enable_atc'] ) ) {
+					return;
+				}
+			} else {
+				if ( isset( $options['label_trending_classic_enable_atc'] ) && empty( $options['label_trending_classic_enable_atc'] ) ) {
+					return;
+				}
 			}
 
 			$target_id = (int) $product_id;
@@ -1050,6 +1061,52 @@ class Feed_Item {
 		}
 
 		return $map;
+	}
+
+	/**
+	 * Query top products by add-to-cart count since a cutoff date.
+	 *
+	 * @param string $cutoff_date_sql Cutoff date (Y-m-d).
+	 * @param int    $min_atc         Minimum total ATC count.
+	 * @param int    $limit           Maximum number of rows to retrieve.
+	 * @return array<int, array{product_id: int, total_atc: int}> List of rows ordered by total_atc DESC.
+	 */
+	public static function query_top_atc( $cutoff_date_sql, $min_atc = 1, $limit = 100 ) {
+		global $wpdb;
+		$table = $wpdb->prefix . 'woo_meta_catalog_atc';
+
+		$exists = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
+		if ( ! $exists ) {
+			return array();
+		}
+
+		$sql = $wpdb->prepare(
+			"SELECT product_id, SUM(count) AS total_atc
+			 FROM {$table}
+			 WHERE date >= %s
+			 GROUP BY product_id
+			 HAVING total_atc >= %d
+			 ORDER BY total_atc DESC
+			 LIMIT %d",
+			$cutoff_date_sql,
+			$min_atc,
+			$limit
+		);
+
+		$raw = $wpdb->get_results( $sql, ARRAY_A );
+		if ( empty( $raw ) ) {
+			return array();
+		}
+
+		$results = array();
+		foreach ( $raw as $r ) {
+			$results[] = array(
+				'product_id' => (int) $r['product_id'],
+				'total_atc'  => (int) $r['total_atc'],
+			);
+		}
+
+		return $results;
 	}
 
 	/**
@@ -1497,7 +1554,7 @@ class Feed_Item {
 	}
 
 	/**
-	 * Calculate classic trending products (top sales in last X days, in stock).
+	 * Calculate classic trending products (top sales in last X days, with optional top 7-day add-to-cart).
 	 *
 	 * @param array $options    Plugin settings.
 	 * @param bool  $save_cache Whether to update persistent cache.
@@ -1508,43 +1565,209 @@ class Feed_Item {
 			$options = get_option( 'woo_meta_catalog_settings', array() );
 		}
 
-		$limit     = ! empty( $options['label_trending_count'] ) ? max( 1, (int) $options['label_trending_count'] ) : 35;
-		$days      = ! empty( $options['label_trending_days'] ) ? max( 1, (int) $options['label_trending_days'] ) : 45;
-		$min_price = isset( $options['label_trending_min_price'] ) ? max( 0.0, (float) $options['label_trending_min_price'] ) : 8.0;
+		$limit      = ! empty( $options['label_trending_count'] ) ? max( 1, (int) $options['label_trending_count'] ) : 35;
+		$days       = ! empty( $options['label_trending_days'] ) ? max( 1, (int) $options['label_trending_days'] ) : 45;
+		$min_price  = isset( $options['label_trending_min_price'] ) ? max( 0.0, (float) $options['label_trending_min_price'] ) : 8.0;
+		$enable_atc = ! isset( $options['label_trending_classic_enable_atc'] ) || ! empty( $options['label_trending_classic_enable_atc'] );
+		$atc_days   = ! empty( $options['label_trending_classic_atc_days'] ) ? max( 1, (int) $options['label_trending_classic_atc_days'] ) : 7;
+		$atc_ratio  = isset( $options['label_trending_classic_atc_ratio'] ) ? max( 0.0, min( 100.0, (float) $options['label_trending_classic_atc_ratio'] ) ) : 30.0;
+		$atc_min    = isset( $options['label_trending_classic_atc_min'] ) ? max( 1, (int) $options['label_trending_classic_atc_min'] ) : 2;
 
-		$cutoff_date = date( 'Y-m-d H:i:s', current_time( 'timestamp' ) - ( $days * DAY_IN_SECONDS ) );
+		// 1. Quotas.
+		$atc_quota   = $enable_atc ? (int) round( $limit * ( $atc_ratio / 100.0 ) ) : 0;
+		$sales_quota = max( 0, $limit - $atc_quota );
 
-		$rows = self::query_net_sales( $cutoff_date );
+		// 2. Prune old ATC data if enabled.
+		if ( $enable_atc ) {
+			self::prune_old_atc_data( 60 );
+		}
 
-		// Filter for in-stock, published, visible, min_price and up to limit.
-		$items = array();
-		$ids   = array();
+		// 3. Cutoff dates & data queries.
+		$sales_cutoff = date( 'Y-m-d H:i:s', current_time( 'timestamp' ) - ( $days * DAY_IN_SECONDS ) );
+		$sales_rows   = self::query_net_sales( $sales_cutoff );
+		$sales_map    = array();
+		foreach ( $sales_rows as $r ) {
+			$sales_map[ (int) $r['product_id'] ] = (int) $r['net_sales'];
+		}
 
-		foreach ( $rows as $r ) {
-			if ( count( $ids ) >= $limit ) {
+		$atc_map      = array();
+		$top_atc_rows = array();
+		if ( $enable_atc && $atc_quota > 0 ) {
+			$atc_cutoff   = date( 'Y-m-d', current_time( 'timestamp' ) - ( $atc_days * DAY_IN_SECONDS ) );
+			$atc_map      = self::query_atc_totals( $atc_cutoff );
+			$top_atc_rows = self::query_top_atc( $atc_cutoff, $atc_min, max( 50, $atc_quota * 4 ) );
+		}
+
+		$selected_atc     = array();
+		$selected_sales   = array();
+		$all_selected_ids = array();
+
+		// 4. Phase 1: Selection from Top Add-to-Cart (7 days).
+		if ( $enable_atc && $atc_quota > 0 && ! empty( $top_atc_rows ) ) {
+			foreach ( $top_atc_rows as $row ) {
+				if ( count( $selected_atc ) >= $atc_quota ) {
+					break;
+				}
+				$pid = (int) $row['product_id'];
+				if ( isset( $all_selected_ids[ $pid ] ) ) {
+					continue;
+				}
+
+				$check = self::check_product_eligibility( $pid, $min_price, 1 );
+				if ( ! $check['eligible'] ) {
+					continue;
+				}
+
+				$atc_count   = (int) $row['total_atc'];
+				$sales_count = isset( $sales_map[ $pid ] ) ? (int) $sales_map[ $pid ] : 0;
+				$source      = ( $sales_count > 0 ) ? 'Ventes + Panier' : 'Panier';
+				$score       = round( $sales_count + ( $atc_count * 0.5 ), 2 );
+
+				$selected_atc[ $pid ] = array(
+					'id'              => $pid,
+					'name'            => $check['name'],
+					'source'          => $source,
+					'sales'           => $sales_count,
+					'atc'             => $atc_count,
+					'score'           => $score,
+					'price'           => (float) $check['price'],
+					'stock'           => $check['stock'],
+					'thumb'           => $check['thumb'],
+					'fallback_cat_id' => 0,
+					'fallback_cat'    => '',
+				);
+				$all_selected_ids[ $pid ] = true;
+			}
+		}
+
+		// 5. Phase 2: Selection from Top Sales (D days).
+		foreach ( $sales_rows as $r ) {
+			if ( count( $selected_sales ) >= $sales_quota ) {
 				break;
 			}
-			$pid   = (int) $r['product_id'];
+			$pid = (int) $r['product_id'];
+			if ( isset( $all_selected_ids[ $pid ] ) ) {
+				continue;
+			}
+
 			$check = self::check_product_eligibility( $pid, $min_price, 1 );
 			if ( ! $check['eligible'] ) {
 				continue;
 			}
 
-			$items[] = array(
+			$sales_count = (int) $r['net_sales'];
+			$atc_count   = isset( $atc_map[ $pid ] ) ? (int) $atc_map[ $pid ] : 0;
+			$source      = ( $atc_count > 0 ) ? 'Ventes + Panier' : 'Ventes';
+			$score       = round( $sales_count + ( $atc_count * 0.5 ), 2 );
+
+			$selected_sales[ $pid ] = array(
 				'id'              => $pid,
 				'name'            => $check['name'],
-				'source'          => 'Classique',
-				'sales'           => (int) $r['net_sales'],
-				'atc'             => 0,
-				'score'           => (float) $r['net_sales'],
+				'source'          => $source,
+				'sales'           => $sales_count,
+				'atc'             => $atc_count,
+				'score'           => $score,
 				'price'           => (float) $check['price'],
 				'stock'           => $check['stock'],
 				'thumb'           => $check['thumb'],
 				'fallback_cat_id' => 0,
 				'fallback_cat'    => '',
 			);
-			$ids[] = $pid;
+			$all_selected_ids[ $pid ] = true;
 		}
+
+		// 6. Phase 3: Overflow / Débordement Anti-Rupture.
+		// If total selected < $limit, fill remaining slots from remaining sales first, then remaining ATC.
+		if ( count( $all_selected_ids ) < $limit ) {
+			foreach ( $sales_rows as $r ) {
+				if ( count( $all_selected_ids ) >= $limit ) {
+					break;
+				}
+				$pid = (int) $r['product_id'];
+				if ( isset( $all_selected_ids[ $pid ] ) ) {
+					continue;
+				}
+
+				$check = self::check_product_eligibility( $pid, $min_price, 1 );
+				if ( ! $check['eligible'] ) {
+					continue;
+				}
+
+				$sales_count = (int) $r['net_sales'];
+				$atc_count   = isset( $atc_map[ $pid ] ) ? (int) $atc_map[ $pid ] : 0;
+				$source      = ( $atc_count > 0 ) ? 'Ventes + Panier' : 'Ventes';
+				$score       = round( $sales_count + ( $atc_count * 0.5 ), 2 );
+
+				$selected_sales[ $pid ] = array(
+					'id'              => $pid,
+					'name'            => $check['name'],
+					'source'          => $source,
+					'sales'           => $sales_count,
+					'atc'             => $atc_count,
+					'score'           => $score,
+					'price'           => (float) $check['price'],
+					'stock'           => $check['stock'],
+					'thumb'           => $check['thumb'],
+					'fallback_cat_id' => 0,
+					'fallback_cat'    => '',
+				);
+				$all_selected_ids[ $pid ] = true;
+			}
+		}
+
+		if ( count( $all_selected_ids ) < $limit && $enable_atc && ! empty( $top_atc_rows ) ) {
+			foreach ( $top_atc_rows as $row ) {
+				if ( count( $all_selected_ids ) >= $limit ) {
+					break;
+				}
+				$pid = (int) $row['product_id'];
+				if ( isset( $all_selected_ids[ $pid ] ) ) {
+					continue;
+				}
+
+				$check = self::check_product_eligibility( $pid, $min_price, 1 );
+				if ( ! $check['eligible'] ) {
+					continue;
+				}
+
+				$atc_count   = (int) $row['total_atc'];
+				$sales_count = isset( $sales_map[ $pid ] ) ? (int) $sales_map[ $pid ] : 0;
+				$source      = ( $sales_count > 0 ) ? 'Ventes + Panier' : 'Panier';
+				$score       = round( $sales_count + ( $atc_count * 0.5 ), 2 );
+
+				$selected_atc[ $pid ] = array(
+					'id'              => $pid,
+					'name'            => $check['name'],
+					'source'          => $source,
+					'sales'           => $sales_count,
+					'atc'             => $atc_count,
+					'score'           => $score,
+					'price'           => (float) $check['price'],
+					'stock'           => $check['stock'],
+					'thumb'           => $check['thumb'],
+					'fallback_cat_id' => 0,
+					'fallback_cat'    => '',
+				);
+				$all_selected_ids[ $pid ] = true;
+			}
+		}
+
+		// 7. Merge and sort final items by score DESC, sales DESC, atc DESC, id DESC.
+		$final_items = $selected_atc + $selected_sales;
+		uasort( $final_items, function( $x, $y ) {
+			if ( $y['score'] !== $x['score'] ) {
+				return ( $y['score'] > $x['score'] ) ? 1 : -1;
+			}
+			if ( $y['sales'] !== $x['sales'] ) {
+				return $y['sales'] <=> $x['sales'];
+			}
+			if ( $y['atc'] !== $x['atc'] ) {
+				return $y['atc'] <=> $x['atc'];
+			}
+			return $y['id'] <=> $x['id'];
+		} );
+
+		$ids = array_keys( $final_items );
 
 		$cache_data = array(
 			'timestamp'     => time(),
@@ -1556,9 +1779,14 @@ class Feed_Item {
 			'count_a'       => count( $ids ),
 			'count_b1'      => 0,
 			'count_b2'      => 0,
+			'count_sales'   => count( $selected_sales ),
+			'count_atc'     => count( $selected_atc ),
+			'quota_sales'   => $sales_quota,
+			'quota_atc'     => $atc_quota,
+			'enable_atc'    => $enable_atc ? 1 : 0,
 			'b2_cap'        => 0,
 			'b1_warning'    => false,
-			'items'         => $items,
+			'items'         => array_values( $final_items ),
 			'ids'           => array_map( 'intval', $ids ),
 		);
 

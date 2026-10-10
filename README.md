@@ -137,6 +137,17 @@ Consommé par `woo-fb-tracking-server-side` v2.1.0+ (mode « auto ») : `apply_f
 
 ## 📝 Changelog
 
+### 1.10.0
+- **Intégration des ajouts au panier (7 jours) dans la méthode Tendance standard (Classique)** :
+  - La méthode standard intègre désormais les produits en stock les plus ajoutés au panier sur les 7 derniers jours (`label_trending_classic_enable_atc`), combinés aux meilleures ventes récentes.
+  - **Algorithme à 3 phases avec réservation de quota & débordement automatique** :
+    - Phase 1 : extraction des pépites ayant suscité le plus fort intérêt panier (7 jours, seuil min d'ajouts configurable, défaut 2 ajouts, prix min respecté) jusqu'au quota alloué (défaut : 30 % du Top N, soit ~11 produits sur 35).
+    - Phase 2 : sélection des meilleures ventes sur la période définie (défaut : 45 jours) pour compléter le reste du Top N (70 %).
+    - Phase 3 : débordement anti-rupture immédiat. En cas de manque de données panier (boutique récente ou cold start), les meilleures ventes complètent automatiquement 100 % des places du Top N sans aucune rupture dans le flux.
+  - **Fusion & Score composite harmonisé** : si un produit cumule de fortes ventes et de forts ajouts au panier, ses statistiques sont combinées (`score = ventes + 0.5 * ajouts`), le propulsant en tête du catalogue sans consommer de double place.
+  - **Écoute automatique Add-to-Cart** : activation automatique du tracking léger des ajouts au panier dès que le marqueur tendance est actif en mode standard ou saisonnier.
+  - **Aperçu & Badges enrichis** : affichage dans le tableau de prévisualisation des badges distincts (`Ventes`, `Panier (7j)`, `Ventes + Panier`) et du détail des volumes pour un contrôle visuel immédiat.
+
 ### 1.9.3
 - **Optimisation ergonomique & pleine largeur de l'interface d'administration** :
   - Élargissement du conteneur principal `.woo-meta-catalog-wrap` à 1 440 px (au lieu de 1 100 px) pour exploiter les écrans larges modernes et supprimer l'espace gris inutilisé.

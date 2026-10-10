@@ -525,6 +525,23 @@
 		var initialTrendingMode = $('input[name="label_trending_mode"]:checked').val() || 'classic';
 		setTrendingMode(initialTrendingMode, false);
 
+		$('#label_trending_classic_enable_atc').on('change', function() {
+			if ($(this).is(':checked')) {
+				$('#trending-classic-atc-wrap').slideDown(150);
+			} else {
+				$('#trending-classic-atc-wrap').slideUp(150);
+			}
+		});
+
+		function updateClassicAtcDesc() {
+			var ratio = parseFloat($('#label_trending_classic_atc_ratio').val()) || 0;
+			var total = parseInt($('#label_trending_count_classic').val(), 10) || 35;
+			var maxCount = Math.round(total * (ratio / 100.0));
+			$('#label_trending_classic_atc_ratio_desc').text('Soit jusqu\'à ' + maxCount + ' produits sur ' + total);
+		}
+
+		$('#label_trending_classic_atc_ratio, #label_trending_count_classic').on('input', updateClassicAtcDesc);
+
 		$('#label_trending_enable_atc').on('change', function() {
 			if ($(this).is(':checked')) {
 				$('#trending-atc-weight-wrap').slideDown(150);

@@ -475,6 +475,16 @@ class Feed_Admin {
 						</p>
 					</div>
 				<?php endif; ?>
+			<?php elseif ( ! $is_seasonal && ! empty( $cache ) && ! empty( $cache['enable_atc'] ) ) : ?>
+				<!-- METRICS PILLS (CLASSIC WITH ATC) -->
+				<div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px;">
+					<div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 4px; padding: 6px 12px; font-size: 12px; color: #15803d;">
+						<strong><?php esc_html_e( 'Ventes directes :', 'woo-meta-catalog' ); ?></strong> <?php echo esc_html( $cache['count_sales'] ?? count( $items ) ); ?> / <?php echo esc_html( $cache['quota_sales'] ?? count( $items ) ); ?>
+					</div>
+					<div style="background: #faf5ff; border: 1px solid #e9d5ff; border-radius: 4px; padding: 6px 12px; font-size: 12px; color: #7e22ce;">
+						<strong><?php esc_html_e( 'Top Panier (7j) :', 'woo-meta-catalog' ); ?></strong> <?php echo esc_html( $cache['count_atc'] ?? 0 ); ?> / <?php echo esc_html( $cache['quota_atc'] ?? 0 ); ?>
+					</div>
+				</div>
 			<?php endif; ?>
 
 			<?php if ( empty( $items ) ) : ?>
@@ -519,6 +529,12 @@ class Feed_Admin {
 											<span class="diag-badge" style="background: #dbeafe; color: #1e40af;"><?php esc_html_e( 'Année N-1 [B1]', 'woo-meta-catalog' ); ?></span>
 										<?php elseif ( 'B2' === $item['source'] ) : ?>
 											<span class="diag-badge" style="background: #fef3c7; color: #b45309;"><?php esc_html_e( 'Repli [B2]', 'woo-meta-catalog' ); ?></span>
+										<?php elseif ( 'Ventes' === $item['source'] ) : ?>
+											<span class="diag-badge" style="background: #dcfce7; color: #15803d;"><?php esc_html_e( 'Ventes', 'woo-meta-catalog' ); ?></span>
+										<?php elseif ( 'Panier' === $item['source'] ) : ?>
+											<span class="diag-badge" style="background: #f3e8ff; color: #7e22ce;"><?php esc_html_e( 'Panier (7j)', 'woo-meta-catalog' ); ?></span>
+										<?php elseif ( 'Ventes + Panier' === $item['source'] ) : ?>
+											<span class="diag-badge" style="background: #e0f2fe; color: #0369a1;"><?php esc_html_e( 'Ventes + Panier', 'woo-meta-catalog' ); ?></span>
 										<?php else : ?>
 											<span class="diag-badge" style="background: #f1f5f9; color: #475569;"><?php echo esc_html( $item['source'] ); ?></span>
 										<?php endif; ?>
@@ -540,8 +556,17 @@ class Feed_Admin {
 											<span style="font-size: 11px; color: #64748b; display: block;"><?php esc_html_e( 'ventes l\'an passé', 'woo-meta-catalog' ); ?></span>
 										<?php elseif ( 'B2' === $item['source'] ) : ?>
 											<span style="font-size: 11px; color: #64748b;"><?php esc_html_e( 'Nouveauté catégorie', 'woo-meta-catalog' ); ?></span>
+										<?php elseif ( ! empty( $item['atc'] ) && ! empty( $item['sales'] ) ) : ?>
+											<strong><?php echo esc_html( $item['score'] ); ?></strong>
+											<span style="font-size: 11px; color: #64748b; display: block;">
+												<?php printf( esc_html__( '%1$d ventes • %2$d ajouts', 'woo-meta-catalog' ), (int) $item['sales'], (int) $item['atc'] ); ?>
+											</span>
+										<?php elseif ( ! empty( $item['atc'] ) ) : ?>
+											<strong><?php echo (int) $item['atc']; ?></strong>
+											<span style="font-size: 11px; color: #64748b; display: block;"><?php esc_html_e( 'ajouts panier (7j)', 'woo-meta-catalog' ); ?></span>
 										<?php else : ?>
-											<strong><?php echo (int) $item['sales']; ?></strong> <?php esc_html_e( 'ventes', 'woo-meta-catalog' ); ?>
+											<strong><?php echo (int) $item['sales']; ?></strong>
+											<span style="font-size: 11px; color: #64748b; display: block;"><?php esc_html_e( 'ventes', 'woo-meta-catalog' ); ?></span>
 										<?php endif; ?>
 									</td>
 									<td>
@@ -592,6 +617,10 @@ class Feed_Admin {
 			// Mode saisonnier actif : champs saisonniers lus depuis $_POST, champs classiques préservés depuis $existing.
 			$trending_count                 = isset( $existing['label_trending_count'] ) ? max( 1, intval( $existing['label_trending_count'] ) ) : 35;
 			$trending_days                  = isset( $existing['label_trending_days'] ) ? max( 1, intval( $existing['label_trending_days'] ) ) : 45;
+			$trending_classic_enable_atc    = isset( $existing['label_trending_classic_enable_atc'] ) ? ( ! empty( $existing['label_trending_classic_enable_atc'] ) ? 1 : 0 ) : 1;
+			$trending_classic_atc_days      = isset( $existing['label_trending_classic_atc_days'] ) ? max( 1, intval( $existing['label_trending_classic_atc_days'] ) ) : 7;
+			$trending_classic_atc_ratio     = isset( $existing['label_trending_classic_atc_ratio'] ) ? max( 0.0, min( 100.0, floatval( $existing['label_trending_classic_atc_ratio'] ) ) ) : 30.0;
+			$trending_classic_atc_min       = isset( $existing['label_trending_classic_atc_min'] ) ? max( 1, intval( $existing['label_trending_classic_atc_min'] ) ) : 2;
 			$trending_seasonal_count        = max( 1, intval( $_POST['label_trending_seasonal_count'] ?? ( $existing['label_trending_seasonal_count'] ?? 60 ) ) );
 			$trending_recent_ratio          = max( 0.0, min( 100.0, floatval( $_POST['label_trending_recent_ratio'] ?? ( $existing['label_trending_recent_ratio'] ?? 60.0 ) ) ) );
 			$trending_recent_days           = max( 1, intval( $_POST['label_trending_recent_days'] ?? ( $existing['label_trending_recent_days'] ?? 15 ) ) );
@@ -610,6 +639,10 @@ class Feed_Admin {
 			// Mode classique actif : champs classiques lus depuis $_POST, champs saisonniers préservés depuis $existing.
 			$trending_count                 = max( 1, intval( $_POST['label_trending_count'] ?? ( $existing['label_trending_count'] ?? 35 ) ) );
 			$trending_days                  = max( 1, intval( $_POST['label_trending_days'] ?? ( $existing['label_trending_days'] ?? 45 ) ) );
+			$trending_classic_enable_atc    = isset( $_POST['label_trending_classic_enable_atc'] ) ? 1 : 0;
+			$trending_classic_atc_days      = max( 1, intval( $_POST['label_trending_classic_atc_days'] ?? ( $existing['label_trending_classic_atc_days'] ?? 7 ) ) );
+			$trending_classic_atc_ratio     = max( 0.0, min( 100.0, floatval( $_POST['label_trending_classic_atc_ratio'] ?? ( $existing['label_trending_classic_atc_ratio'] ?? 30.0 ) ) ) );
+			$trending_classic_atc_min       = max( 1, intval( $_POST['label_trending_classic_atc_min'] ?? ( $existing['label_trending_classic_atc_min'] ?? 2 ) ) );
 			$trending_seasonal_count        = isset( $existing['label_trending_seasonal_count'] ) ? max( 1, intval( $existing['label_trending_seasonal_count'] ) ) : 60;
 			$trending_recent_ratio          = isset( $existing['label_trending_recent_ratio'] ) ? max( 0.0, min( 100.0, floatval( $existing['label_trending_recent_ratio'] ) ) ) : 60.0;
 			$trending_recent_days           = isset( $existing['label_trending_recent_days'] ) ? max( 1, intval( $existing['label_trending_recent_days'] ) ) : 15;
@@ -666,8 +699,12 @@ class Feed_Admin {
 			'label_enable_trending'                => isset( $_POST['label_enable_trending'] ) ? 1 : 0,
 			'label_trending_mode'                  => $submitted_mode,
 			'label_trending_count'                 => $trending_count,
-			'label_trending_seasonal_count'        => $trending_seasonal_count,
 			'label_trending_days'                  => $trending_days,
+			'label_trending_classic_enable_atc'    => $trending_classic_enable_atc,
+			'label_trending_classic_atc_days'      => $trending_classic_atc_days,
+			'label_trending_classic_atc_ratio'     => $trending_classic_atc_ratio,
+			'label_trending_classic_atc_min'       => $trending_classic_atc_min,
+			'label_trending_seasonal_count'        => $trending_seasonal_count,
 			'label_trending_tag'                   => sanitize_text_field( wp_unslash( $_POST['label_trending_tag'] ?? 'tendance' ) ),
 			'label_trending_recent_ratio'          => $trending_recent_ratio,
 			'label_trending_recent_days'           => $trending_recent_days,
@@ -686,8 +723,8 @@ class Feed_Admin {
 
 		update_option( 'woo_meta_catalog_settings', $settings );
 
-		// If ATC enabled, ensure table exists.
-		if ( ! empty( $settings['label_trending_enable_atc'] ) ) {
+		// If ATC enabled in either mode, ensure table exists.
+		if ( ! empty( $settings['label_trending_enable_atc'] ) || ! empty( $settings['label_trending_classic_enable_atc'] ) ) {
 			Feed_Item::maybe_create_atc_table();
 		}
 
@@ -1320,7 +1357,7 @@ class Feed_Admin {
 											<label style="margin-right: 20px; cursor: pointer;">
 												<input type="radio" name="label_trending_mode" value="classic" class="trending-mode-radio" <?php checked( empty( $options['label_trending_mode'] ) || 'classic' === $options['label_trending_mode'] ); ?> />
 												<strong><?php esc_html_e( 'Mode Classique', 'woo-meta-catalog' ); ?></strong>
-												<span style="color: #64748b; font-size: 12px;"> — <?php esc_html_e( 'Ventes directes sur les X derniers jours', 'woo-meta-catalog' ); ?></span>
+												<span style="color: #64748b; font-size: 12px;"> — <?php esc_html_e( 'Ventes récentes + Ajouts au panier (7 jours)', 'woo-meta-catalog' ); ?></span>
 											</label>
 											<label style="cursor: pointer;">
 												<input type="radio" name="label_trending_mode" value="seasonal" class="trending-mode-radio" <?php checked( ! empty( $options['label_trending_mode'] ) && 'seasonal' === $options['label_trending_mode'] ); ?> />
@@ -1344,6 +1381,40 @@ class Feed_Admin {
 													<label for="label_trending_min_price_classic"><strong><?php esc_html_e( 'Prix effectif minimum (€) :', 'woo-meta-catalog' ); ?></strong></label><br>
 													<input name="label_trending_min_price" type="number" step="0.5" min="0" id="label_trending_min_price_classic" value="<?php echo esc_attr( $options['label_trending_min_price'] ?? '8.0' ); ?>" class="small-text" /> €
 													<p class="description" style="margin-top: 2px; font-size: 11px;"><?php esc_html_e( 'Exclut les articles vendus sous ce seuil (ex: vis, consommables).', 'woo-meta-catalog' ); ?></p>
+												</div>
+											</div>
+
+											<!-- ATC INTEGRATION IN CLASSIC MODE -->
+											<div style="margin-top: 14px; padding-top: 14px; border-top: 1px solid #e2e8f0;">
+												<label for="label_trending_classic_enable_atc" style="font-weight: 600; cursor: pointer;">
+													<input name="label_trending_classic_enable_atc" type="checkbox" id="label_trending_classic_enable_atc" value="1" <?php checked( ! isset( $options['label_trending_classic_enable_atc'] ) || ! empty( $options['label_trending_classic_enable_atc'] ) ); ?> />
+													<?php esc_html_e( 'Intégrer les produits en stock les plus ajoutés au panier des 7 derniers jours', 'woo-meta-catalog' ); ?>
+												</label>
+												<p class="description" style="margin: 4px 0 10px 24px; font-size: 12px;">
+													<?php esc_html_e( 'Injecte les produits suscitant le plus fort intérêt récent au panier, combinés aux meilleures ventes. En cas de manque de données panier, les ventes complètent automatiquement.', 'woo-meta-catalog' ); ?>
+												</p>
+												<div id="trending-classic-atc-wrap" style="margin-left: 24px; display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; <?php echo ( isset( $options['label_trending_classic_enable_atc'] ) && empty( $options['label_trending_classic_enable_atc'] ) ) ? 'display: none;' : ''; ?>">
+													<div>
+														<label for="label_trending_classic_atc_days" style="font-size: 12px;"><strong><?php esc_html_e( 'Fenêtre panier :', 'woo-meta-catalog' ); ?></strong></label><br>
+														<input name="label_trending_classic_atc_days" type="number" min="1" max="30" id="label_trending_classic_atc_days" value="<?php echo esc_attr( $options['label_trending_classic_atc_days'] ?? 7 ); ?>" class="small-text" /> <?php esc_html_e( 'jours', 'woo-meta-catalog' ); ?>
+													</div>
+													<div>
+														<label for="label_trending_classic_atc_ratio" style="font-size: 12px;"><strong><?php esc_html_e( 'Part max ajouts panier (%) :', 'woo-meta-catalog' ); ?></strong></label><br>
+														<input name="label_trending_classic_atc_ratio" type="number" min="0" max="100" id="label_trending_classic_atc_ratio" value="<?php echo esc_attr( $options['label_trending_classic_atc_ratio'] ?? 30 ); ?>" class="small-text" /> %
+														<p class="description" style="margin-top: 2px; font-size: 11px;" id="label_trending_classic_atc_ratio_desc">
+															<?php
+															$c_ratio = (float) ( $options['label_trending_classic_atc_ratio'] ?? 30 );
+															$c_count = (int) ( $options['label_trending_count'] ?? 35 );
+															$max_atc_count = (int) round( $c_count * ( $c_ratio / 100.0 ) );
+															printf( esc_html__( 'Soit jusqu\'à %d produits sur %d', 'woo-meta-catalog' ), $max_atc_count, $c_count );
+															?>
+														</p>
+													</div>
+													<div>
+														<label for="label_trending_classic_atc_min" style="font-size: 12px;"><strong><?php esc_html_e( 'Seuil min d\'ajouts :', 'woo-meta-catalog' ); ?></strong></label><br>
+														<input name="label_trending_classic_atc_min" type="number" min="1" id="label_trending_classic_atc_min" value="<?php echo esc_attr( $options['label_trending_classic_atc_min'] ?? 2 ); ?>" class="small-text" /> <?php esc_html_e( 'ajouts', 'woo-meta-catalog' ); ?>
+														<p class="description" style="margin-top: 2px; font-size: 11px;"><?php esc_html_e( 'Élimine les ajouts isolés ou accidentels.', 'woo-meta-catalog' ); ?></p>
+													</div>
 												</div>
 											</div>
 										</div>
