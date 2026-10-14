@@ -34,6 +34,8 @@ class Feed_Admin {
 		add_action( 'wp_ajax_woo_meta_catalog_run_diagnostic_test', array( $this, 'ajax_run_diagnostic_test' ) );
 		add_action( 'wp_ajax_woo_meta_catalog_clear_logs', array( $this, 'ajax_clear_logs' ) );
 		add_action( 'wp_ajax_woo_meta_catalog_recalculate_trending', array( $this, 'ajax_recalculate_trending' ) );
+		add_action( 'wp_ajax_woo_meta_catalog_scan_image_risks', array( $this, 'ajax_scan_image_risks' ) );
+		add_action( 'wp_ajax_woo_meta_catalog_send_risk_email', array( $this, 'ajax_send_risk_email' ) );
 		add_action( 'admin_init', array( $this, 'save_settings' ) );
 	}
 
@@ -188,6 +190,9 @@ class Feed_Admin {
 		$result = Feed_Generator::instance()->finalize_feed( $run_id );
 
 		if ( ! empty( $result['success'] ) ) {
+			ob_start();
+			$this->render_image_risk_preview_box();
+			$result['image_risk_html'] = ob_get_clean();
 			wp_send_json_success( $result );
 		} else {
 			wp_send_json_error( $result );
@@ -597,6 +602,224 @@ class Feed_Admin {
 	}
 
 	/**
+	 * Handle AJAX on-demand scan of strategic labeled product images.
+	 */
+	public function ajax_scan_image_risks() {
+		check_ajax_referer( 'woo_meta_catalog_admin_nonce', 'security' );
+
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Droits insuffisants.', 'woo-meta-catalog' ) ) );
+		}
+
+		$report = Feed_Image_Risk::run_standalone_scan();
+
+		ob_start();
+		$this->render_image_risk_preview_box( $report );
+		$html = ob_get_clean();
+
+		wp_send_json_success( array(
+			'message'       => __( 'Audit des images terminé avec succès.', 'woo-meta-catalog' ),
+			'html'          => $html,
+			'total_at_risk' => $report['total_at_risk'] ?? 0,
+			'checked'       => $report['strategic_items_checked'] ?? 0,
+		) );
+	}
+
+	/**
+	 * Handle AJAX manual dispatch of the image risk email report.
+	 */
+	public function ajax_send_risk_email() {
+		check_ajax_referer( 'woo_meta_catalog_admin_nonce', 'security' );
+
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Droits insuffisants.', 'woo-meta-catalog' ) ) );
+		}
+
+		$options = get_option( 'woo_meta_catalog_settings', array() );
+		if ( ! empty( $_POST['email'] ) ) {
+			$options['image_risk_alert_email'] = sanitize_text_field( wp_unslash( $_POST['email'] ) );
+		}
+
+		$report = get_option( Feed_Image_Risk::REPORT_OPTION, array() );
+		if ( empty( $report ) || ! isset( $report['strategic_items_checked'] ) ) {
+			$report = Feed_Image_Risk::run_standalone_scan( $options );
+		}
+
+		$res = Feed_Image_Risk::send_alert_email( $report, $options, true );
+
+		if ( ! empty( $res['sent'] ) ) {
+			wp_send_json_success( array(
+				'message' => $res['message'],
+			) );
+		} else {
+			wp_send_json_error( array(
+				'message' => $res['message'] ?? __( 'Échec de l\'envoi de l\'e-mail.', 'woo-meta-catalog' ),
+			) );
+		}
+	}
+
+	/**
+	 * Render the preview & diagnostic box for Strategic Product Sets Image Risk Analysis.
+	 *
+	 * @param array|null $report Cached report data.
+	 */
+	public function render_image_risk_preview_box( $report = null ) {
+		if ( null === $report ) {
+			$report = get_option( Feed_Image_Risk::REPORT_OPTION, array() );
+		}
+
+		$last_email      = get_option( Feed_Image_Risk::LAST_EMAIL_OPTION, array() );
+		$last_email_date = ! empty( $last_email['date'] ) ? $last_email['date'] : __( 'Aucun envoi récent', 'woo-meta-catalog' );
+		$has_report      = ! empty( $report ) && isset( $report['strategic_items_checked'] );
+		$items           = ! empty( $report['items'] ) && is_array( $report['items'] ) ? $report['items'] : array();
+		$total_at_risk   = isset( $report['total_at_risk'] ) ? (int) $report['total_at_risk'] : count( $items );
+		$checked         = isset( $report['strategic_items_checked'] ) ? (int) $report['strategic_items_checked'] : 0;
+		$auto_healed     = isset( $report['auto_healed_count'] ) ? (int) $report['auto_healed_count'] : 0;
+		$scan_date       = ! empty( $report['date'] ) ? $report['date'] : '-';
+		?>
+		<div id="woo-meta-image-risk-preview-box" style="margin-top: 15px; background: #ffffff; border: 1px solid #c3c4c7; border-radius: 6px; padding: 16px;">
+			<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid #f0f0f1;">
+				<div>
+					<h4 style="margin: 0 0 4px 0; font-size: 14px; font-weight: 700; color: #1e293b;">
+						<span class="dashicons dashicons-format-image" style="vertical-align: middle; margin-right: 4px; color: #2563eb;"></span>
+						<?php esc_html_e( 'Rapport d\'audit des images (bestseller, promo, nouveaute, tendance)', 'woo-meta-catalog' ); ?>
+					</h4>
+					<div style="font-size: 12px; color: #64748b;">
+						<?php if ( $has_report ) : ?>
+							<?php if ( 0 === $total_at_risk ) : ?>
+								<span class="diag-badge" style="background: #dcfce7; color: #15803d; font-weight: 700; margin-right: 6px;">✓ <?php esc_html_e( '100% Conforme Meta', 'woo-meta-catalog' ); ?></span>
+							<?php else : ?>
+								<span class="diag-badge" style="background: #fee2e2; color: #b91c1c; font-weight: 700; margin-right: 6px;">⚠️ <?php printf( esc_html__( '%d produit(s) à risque', 'woo-meta-catalog' ), $total_at_risk ); ?></span>
+							<?php endif; ?>
+							<?php
+							printf(
+								/* translators: 1: checked items count, 2: scan date, 3: last email date */
+								esc_html__( '%1$d articles étiquetés contrôlés • Dernier scan : %2$s • Dernier e-mail : %3$s', 'woo-meta-catalog' ),
+								$checked,
+								esc_html( $scan_date ),
+								esc_html( $last_email_date )
+							);
+							?>
+						<?php else : ?>
+							<?php esc_html_e( 'Aucun scan effectué pour le moment. L\'audit s\'exécute automatiquement à chaque génération du flux XML ou via le bouton ci-contre.', 'woo-meta-catalog' ); ?>
+						<?php endif; ?>
+					</div>
+				</div>
+				<div style="display: flex; gap: 8px; flex-wrap: wrap;">
+					<button type="button" id="btn-scan-image-risks" class="button button-secondary">
+						<span class="dashicons dashicons-search" style="vertical-align: middle; margin-right: 3px;"></span>
+						<span class="btn-text"><?php esc_html_e( 'Scanner les produits étiquetés maintenant', 'woo-meta-catalog' ); ?></span>
+					</button>
+					<button type="button" id="btn-send-risk-email" class="button button-secondary" title="<?php esc_attr_e( 'Envoie immédiatement le rapport par e-mail aux destinataires configurés', 'woo-meta-catalog' ); ?>">
+						<span class="dashicons dashicons-email-alt" style="vertical-align: middle; margin-right: 3px;"></span>
+						<span class="btn-text"><?php esc_html_e( 'Envoyer le rapport par e-mail', 'woo-meta-catalog' ); ?></span>
+					</button>
+				</div>
+			</div>
+
+			<?php if ( $has_report && $auto_healed > 0 ) : ?>
+				<div style="margin-bottom: 12px; padding: 8px 12px; background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 4px; font-size: 12px; color: #0369a1;">
+					<strong>✨ <?php esc_html_e( 'Auto-remédiation Galerie active :', 'woo-meta-catalog' ); ?></strong>
+					<?php printf( esc_html__( '%d produit(s) dont l\'image principale était non conforme ont été automatiquement sauvés dans le flux XML grâce à une image de leur galerie respectant le format Meta (≥ 500×500 px).', 'woo-meta-catalog' ), $auto_healed ); ?>
+				</div>
+			<?php endif; ?>
+
+			<?php if ( ! $has_report ) : ?>
+				<p style="margin: 0; color: #64748b; font-style: italic; font-size: 13px;">
+					<?php esc_html_e( 'Cliquez sur « Scanner les produits étiquetés maintenant » pour vérifier instantanément vos ensembles Bestseller, Promo, Nouveauté et Tendance.', 'woo-meta-catalog' ); ?>
+				</p>
+			<?php elseif ( empty( $items ) ) : ?>
+				<div style="padding: 12px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; color: #15803d; font-size: 13px;">
+					<span class="dashicons dashicons-yes-alt" style="vertical-align: middle; margin-right: 4px;"></span>
+					<strong><?php esc_html_e( 'Aucune anomalie détectée !', 'woo-meta-catalog' ); ?></strong>
+					<?php esc_html_e( 'Toutes les images principales des produits porteurs d\'étiquettes stratégiques respectent les spécifications de Meta Commerce Manager (JPEG/PNG, < 8 Mo, ≥ 500×500 px, fichier intègre).', 'woo-meta-catalog' ); ?>
+				</div>
+			<?php else : ?>
+				<div style="max-height: 420px; overflow-y: auto; overflow-x: auto; border: 1px solid #e2e8f0; border-radius: 6px;">
+					<table class="wp-list-table widefat striped" style="border: none; margin: 0; width: 100%;">
+						<thead style="position: sticky; top: 0; background: #f8fafc; z-index: 2;">
+							<tr>
+								<th style="min-width: 240px;"><?php esc_html_e( 'Produit', 'woo-meta-catalog' ); ?></th>
+								<th style="width: 140px;"><?php esc_html_e( 'Étiquette(s) Meta', 'woo-meta-catalog' ); ?></th>
+								<th><?php esc_html_e( 'Diagnostic Image (Règles Meta)', 'woo-meta-catalog' ); ?></th>
+								<th style="width: 165px;"><?php esc_html_e( 'Action / Statut Flux', 'woo-meta-catalog' ); ?></th>
+							</tr>
+						</thead>
+						<tbody>
+							<?php foreach ( $items as $row ) : ?>
+								<tr>
+									<td>
+										<div style="display: flex; align-items: center; gap: 10px;">
+											<?php if ( ! empty( $row['thumb_url'] ) ) : ?>
+												<img src="<?php echo esc_url( $row['thumb_url'] ); ?>" style="width: 38px; height: 38px; object-fit: cover; border-radius: 4px; border: 1px solid #e2e8f0; flex-shrink: 0;" alt="" />
+											<?php endif; ?>
+											<div>
+												<a href="<?php echo esc_url( $row['edit_url'] ); ?>" target="_blank" style="font-weight: 600; text-decoration: none;">
+													<?php echo esc_html( $row['name'] ); ?>
+												</a>
+												<div style="font-size: 11px; color: #64748b;">
+													ID #<?php echo (int) $row['product_id']; ?>
+													<?php if ( ! empty( $row['variations_count'] ) && $row['variations_count'] > 1 ) : ?>
+														• <?php printf( esc_html__( '%d déclinaisons', 'woo-meta-catalog' ), (int) $row['variations_count'] ); ?>
+													<?php endif; ?>
+												</div>
+											</div>
+										</div>
+									</td>
+									<td>
+										<?php foreach ( (array) $row['labels'] as $lbl ) : ?>
+											<span class="diag-badge" style="background: #e0f2fe; color: #0369a1; margin: 0 3px 3px 0; display: inline-block;"><?php echo esc_html( $lbl ); ?></span>
+										<?php endforeach; ?>
+									</td>
+									<td>
+										<div style="color: <?php echo 'critical' === ( $row['status'] ?? '' ) ? '#b91c1c' : '#b45309'; ?>; font-weight: 600; font-size: 12px;">
+											<?php foreach ( (array) $row['issues'] as $iss ) : ?>
+												<div>• <?php echo esc_html( $iss ); ?></div>
+											<?php endforeach; ?>
+										</div>
+										<div style="font-size: 11px; color: #64748b; margin-top: 2px;">
+											<?php
+											printf(
+												/* translators: 1: format, 2: dimensions, 3: file size */
+												esc_html__( 'Format : %1$s • Dimensions : %2$s • Poids : %3$s', 'woo-meta-catalog' ),
+												esc_html( $row['format'] ?? '-' ),
+												( ! empty( $row['width'] ) ? esc_html( $row['width'] . '×' . $row['height'] . ' px' ) : 'N/A' ),
+												esc_html( $row['filesize_human'] ?? '-' )
+											);
+											?>
+										</div>
+									</td>
+									<td>
+										<?php if ( ! empty( $row['auto_healed'] ) ) : ?>
+											<span class="diag-badge" style="background: #dcfce7; color: #15803d; display: inline-block; margin-bottom: 4px;">
+												✓ <?php printf( esc_html__( 'Galerie #%d (%s)', 'woo-meta-catalog' ), (int) $row['healed_image_id'], esc_html( $row['healed_dims'] ) ); ?>
+											</span>
+										<?php elseif ( ! empty( $row['labels_stripped'] ) ) : ?>
+											<span class="diag-badge" style="background: #fef3c7; color: #b45309; display: inline-block; margin-bottom: 4px;">
+												🛡️ <?php esc_html_e( 'Étiquette suspendue', 'woo-meta-catalog' ); ?>
+											</span>
+										<?php else : ?>
+											<span class="diag-badge" style="background: #fee2e2; color: #b91c1c; display: inline-block; margin-bottom: 4px;">
+												<?php esc_html_e( 'À remplacer (≥ 500×500)', 'woo-meta-catalog' ); ?>
+											</span>
+										<?php endif; ?>
+										<div>
+											<a href="<?php echo esc_url( $row['edit_url'] ); ?>" target="_blank" style="font-size: 11px; text-decoration: underline;">
+												<?php esc_html_e( 'Modifier l\'image →', 'woo-meta-catalog' ); ?>
+											</a>
+										</div>
+									</td>
+								</tr>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+				</div>
+			<?php endif; ?>
+		</div>
+		<?php
+	}
+
+	/**
 	 * Save plugin settings.
 	 */
 	public function save_settings() {
@@ -666,6 +889,7 @@ class Feed_Admin {
 			'exclude_out_of_stock'    => isset( $_POST['exclude_out_of_stock'] ) ? 1 : 0,
 			'exclude_no_image'        => isset( $_POST['exclude_no_image'] ) ? 1 : 0,
 			'image_version'           => sanitize_text_field( wp_unslash( $_POST['image_version'] ?? '' ) ),
+			'image_auto_cache_bust'   => isset( $_POST['image_auto_cache_bust'] ) ? 1 : 0,
 			'enable_image_cdn'        => isset( $_POST['enable_image_cdn'] ) ? 1 : 0,
 			'image_cdn_provider'      => sanitize_text_field( wp_unslash( $_POST['image_cdn_provider'] ?? 'imagekit' ) ),
 			'image_cdn_endpoint'      => esc_url_raw( trim( wp_unslash( $_POST['image_cdn_endpoint'] ?? '' ) ) ),
@@ -719,6 +943,13 @@ class Feed_Admin {
 			'label_trending_cat_fallback_excluded' => $trending_cat_fallback_excluded,
 			'label_trending_min_price'             => $trending_min_price,
 			'label_trending_min_stock'             => $trending_min_stock,
+
+			// Strategic Image Risk Analysis & Daily Alert settings.
+			'enable_image_risk_alert'          => isset( $_POST['enable_image_risk_alert'] ) ? 1 : 0,
+			'image_risk_alert_email'           => sanitize_text_field( wp_unslash( $_POST['image_risk_alert_email'] ?? get_option( 'admin_email' ) ) ),
+			'image_risk_auto_fallback_gallery' => isset( $_POST['image_risk_auto_fallback_gallery'] ) ? 1 : 0,
+			'image_risk_protect_sets'          => isset( $_POST['image_risk_protect_sets'] ) ? 1 : 0,
+			'image_risk_flag_webp'             => isset( $_POST['image_risk_flag_webp'] ) ? 1 : 0,
 		);
 
 		update_option( 'woo_meta_catalog_settings', $settings );
@@ -1051,15 +1282,24 @@ class Feed_Admin {
 							<tr>
 								<th scope="row"><label for="image_version"><?php esc_html_e( 'Version de cache des images (?v=...)', 'woo-meta-catalog' ); ?></label></th>
 								<td>
+									<div style="margin-bottom: 10px;">
+										<label for="image_auto_cache_bust">
+											<input name="image_auto_cache_bust" type="checkbox" id="image_auto_cache_bust" value="1" <?php checked( ! isset( $options['image_auto_cache_bust'] ) || ! empty( $options['image_auto_cache_bust'] ) ); ?> />
+											<strong><?php esc_html_e( 'Anti-cache négatif Meta : Générer automatiquement une URL unique (?ver=...) dès qu\'une image est modifiée ou remplacée', 'woo-meta-catalog' ); ?></strong>
+										</label>
+										<p class="description">
+											<?php esc_html_e( 'Recommandé (Activé) : Répond automatiquement à l\'exigence de Meta (« enregistrez l\'image sous un lien différent ») en ajoutant l\'empreinte de modification de chaque fichier image, sans invalider le cache des autres produits.', 'woo-meta-catalog' ); ?>
+										</p>
+									</div>
 									<div style="display: flex; gap: 8px; align-items: center; max-width: 520px;">
-										<input name="image_version" type="text" id="image_version" value="<?php echo esc_attr( $options['image_version'] ?? '' ); ?>" class="regular-text" placeholder="<?php esc_attr_e( 'ex: 2 ou timestamp', 'woo-meta-catalog' ); ?>" />
+										<input name="image_version" type="text" id="image_version" value="<?php echo esc_attr( $options['image_version'] ?? '' ); ?>" class="regular-text" placeholder="<?php esc_attr_e( 'ex: 2 ou timestamp global (optionnel)', 'woo-meta-catalog' ); ?>" />
 										<button type="button" class="button button-secondary" id="btn-bust-image-cache" title="<?php esc_attr_e( 'Génère un timestamp pour forcer Meta à retélécharger toutes les images', 'woo-meta-catalog' ); ?>">
 											<span class="dashicons dashicons-update" style="vertical-align: text-top;"></span>
-											<?php esc_html_e( 'Purger le cache Meta (timestamp)', 'woo-meta-catalog' ); ?>
+											<?php esc_html_e( 'Purger tout le cache Meta (timestamp)', 'woo-meta-catalog' ); ?>
 										</button>
 									</div>
 									<p class="description">
-										<?php esc_html_e( 'Ajoute un paramètre ?v=... aux URLs des images (<g:image_link> et <g:additional_image_link>). Permet d\'invalider immédiatement le cache de Meta Commerce Manager pour forcer le retéléchargement complet des visuels.', 'woo-meta-catalog' ); ?>
+										<?php esc_html_e( 'Optionnel : Ajoute un paramètre global ?v=... à toutes les images du flux pour forcer le retéléchargement intégral du catalogue par Meta Commerce Manager.', 'woo-meta-catalog' ); ?>
 									</p>
 								</td>
 							</tr>
@@ -1562,6 +1802,63 @@ class Feed_Admin {
 
 										<!-- PREVIEW & DIAGNOSTIC BOX -->
 										<?php $this->render_trending_preview_box(); ?>
+									</div>
+								</td>
+							</tr>
+
+							<!-- STRATEGIC PRODUCT SETS IMAGE RISK AUDIT & DAILY ALERT -->
+							<tr id="woo-meta-image-risk-section">
+								<th scope="row">
+									<?php esc_html_e( 'Audit & Alerte Images (Ensembles Meta)', 'woo-meta-catalog' ); ?>
+									<div style="margin-top: 4px;">
+										<span style="font-size: 11px; background: #dbeafe; color: #1e40af; padding: 2px 8px; border-radius: 9999px; font-weight: 600;">NOUVEAU v1.11.0</span>
+									</div>
+								</th>
+								<td>
+									<label for="enable_image_risk_alert" style="font-weight: 600; cursor: pointer;">
+										<input name="enable_image_risk_alert" type="checkbox" id="enable_image_risk_alert" value="1" <?php checked( ! isset( $options['enable_image_risk_alert'] ) || ! empty( $options['enable_image_risk_alert'] ) ); ?> />
+										<?php esc_html_e( 'Analyser automatiquement la conformité Meta des images pour les produits étiquetés (bestseller, promo, nouveaute, tendance) et envoyer un e-mail d\'alerte (1 fois par jour max)', 'woo-meta-catalog' ); ?>
+									</label>
+									<p class="description" style="margin-top: 4px;">
+										<?php esc_html_e( 'Contrôle à chaque génération du flux XML que les images des produits de vos ensembles stratégiques respectent les spécifications de Meta Commerce Manager : format JPEG ou PNG, poids < 8 Mo, dimensions ≥ 500 × 500 px et fichier existant sur le serveur.', 'woo-meta-catalog' ); ?>
+									</p>
+
+									<div id="woo-meta-image-risk-settings-wrap" style="margin-top: 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;">
+										<div style="margin-bottom: 14px;">
+											<label for="image_risk_alert_email"><strong><?php esc_html_e( 'Destinataire(s) de l\'alerte e-mail (max 1 envoi / 24h) :', 'woo-meta-catalog' ); ?></strong></label><br />
+											<input name="image_risk_alert_email" type="text" id="image_risk_alert_email" value="<?php echo esc_attr( $options['image_risk_alert_email'] ?? get_option( 'admin_email' ) ); ?>" class="regular-text" style="margin-top: 4px; width: 100%; max-width: 420px;" placeholder="<?php echo esc_attr( get_option( 'admin_email' ) ); ?>" />
+											<p class="description" style="margin-top: 3px; font-size: 12px;">
+												<?php esc_html_e( 'Vous pouvez saisir plusieurs adresses séparées par une virgule. Aucun e-mail n\'est envoyé si 100% des produits étiquetés sont conformes.', 'woo-meta-catalog' ); ?>
+											</p>
+										</div>
+
+										<div style="padding-top: 12px; border-top: 1px solid #e2e8f0;">
+											<div style="font-weight: 600; margin-bottom: 8px; color: #1e293b; font-size: 13px;">
+												<span class="dashicons dashicons-shield-alt" style="vertical-align: middle; color: #059669; margin-right: 4px;"></span>
+												<?php esc_html_e( 'Protections & Auto-remédiation dans le flux XML :', 'woo-meta-catalog' ); ?>
+											</div>
+
+											<label for="image_risk_auto_fallback_gallery" style="display: block; margin-bottom: 8px; cursor: pointer;">
+												<input name="image_risk_auto_fallback_gallery" type="checkbox" id="image_risk_auto_fallback_gallery" value="1" <?php checked( ! isset( $options['image_risk_auto_fallback_gallery'] ) || ! empty( $options['image_risk_auto_fallback_gallery'] ) ); ?> />
+												<strong><?php esc_html_e( 'Auto-remédiation via Galerie (Recommandé) :', 'woo-meta-catalog' ); ?></strong>
+												<?php esc_html_e( 'Si l\'image principale d\'un produit étiqueté est non conforme (< 500×500 px, introuvable ou > 8 Mo), utiliser automatiquement dans le flux XML la première image conforme de sa galerie produit.', 'woo-meta-catalog' ); ?>
+											</label>
+
+											<label for="image_risk_protect_sets" style="display: block; margin-bottom: 8px; cursor: pointer;">
+												<input name="image_risk_protect_sets" type="checkbox" id="image_risk_protect_sets" value="1" <?php checked( ! empty( $options['image_risk_protect_sets'] ) ); ?> />
+												<strong><?php esc_html_e( 'Bouclier Ensembles Meta :', 'woo-meta-catalog' ); ?></strong>
+												<?php esc_html_e( 'Suspendre temporairement les étiquettes (bestseller, promo, nouveaute, tendance) sur un produit dont l\'image est critique et sans galerie de secours, pour garantir 0 erreur dans Meta Commerce Manager.', 'woo-meta-catalog' ); ?>
+											</label>
+
+											<label for="image_risk_flag_webp" style="display: block; cursor: pointer;">
+												<input name="image_risk_flag_webp" type="checkbox" id="image_risk_flag_webp" value="1" <?php checked( ! empty( $options['image_risk_flag_webp'] ) ); ?> />
+												<strong><?php esc_html_e( 'Contrôle strict du format WebP :', 'woo-meta-catalog' ); ?></strong>
+												<?php esc_html_e( 'Signaler également en avertissement les images au format .webp lorsque la conversion automatique en JPEG via CDN (f-jpg) n\'est pas activée.', 'woo-meta-catalog' ); ?>
+											</label>
+										</div>
+
+										<!-- LIVE PREVIEW & MANUAL SCAN / EMAIL BUTTONS -->
+										<?php $this->render_image_risk_preview_box(); ?>
 									</div>
 								</td>
 							</tr>

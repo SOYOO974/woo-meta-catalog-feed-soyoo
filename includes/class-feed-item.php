@@ -57,20 +57,42 @@ class Feed_Item {
 		$id_format = isset( $options['id_format'] ) ? $options['id_format'] : null;
 		$id        = self::get_content_id( $product, $id_format );
 
-		// 3. Images.
-		$image_id = $product->get_image_id();
+		// 3. Internal labels & Gallery lookup (evaluated early for Strategic Image Risk Analysis & Auto-Remediation).
+		$target_product_for_brand = $is_variation ? $parent : $product;
+		$gallery_ids              = (array) $target_product_for_brand->get_gallery_image_ids();
+		$internal_labels          = self::get_internal_labels( $product, $parent, $options );
+		$strategic_labels         = class_exists( '\SOYOO\MetaCatalog\Feed_Image_Risk' )
+			? Feed_Image_Risk::extract_strategic_labels( $internal_labels, $options )
+			: array();
+
+		// 4. Images & Strategic Risk Audit.
+		$image_id = (int) $product->get_image_id();
 		if ( ! $image_id && $is_variation ) {
-			$image_id = $parent->get_image_id();
+			$image_id = (int) $parent->get_image_id();
 		}
 
-		$image_url = $image_id ? wp_get_attachment_image_url( $image_id, 'full' ) : '';
-		if ( empty( $image_url ) && ! empty( $options['exclude_no_image'] ) ) {
+		$raw_image_url = $image_id ? (string) wp_get_attachment_image_url( $image_id, 'full' ) : '';
+
+		// If product carries strategic internal labels (bestseller, promo, nouveaute, tendance),
+		// analyze image compliance against Meta 500x500 / 8MB / JPEG-PNG rules and apply auto-remediation.
+		if ( ! empty( $strategic_labels ) && class_exists( '\SOYOO\MetaCatalog\Feed_Image_Risk' ) ) {
+			Feed_Image_Risk::evaluate_and_remediate(
+				$product,
+				$parent,
+				$image_id,
+				$raw_image_url,
+				$gallery_ids,
+				$strategic_labels,
+				$internal_labels,
+				$options
+			);
+		}
+
+		if ( empty( $raw_image_url ) && ! empty( $options['exclude_no_image'] ) ) {
 			return null;
 		}
 
-		if ( ! empty( $image_url ) ) {
-			$image_url = self::format_image_url( $image_url, $options );
-		}
+		$image_url = ! empty( $raw_image_url ) ? self::format_image_url( $raw_image_url, $options, $image_id ) : '';
 
 		/**
 		 * Filter the main catalog image URL.
@@ -83,7 +105,7 @@ class Feed_Item {
 		 */
 		$image_url = apply_filters( 'woo_meta_catalog_image_url', $image_url, $image_id, $product, $parent, $options );
 
-		// 4. Title formatting.
+		// 5. Title formatting.
 		if ( $is_variation ) {
 			$raw_title = $product->get_name();
 			// Fallback if variation name is identical to parent or empty.
@@ -96,7 +118,7 @@ class Feed_Item {
 		}
 		$title = self::clean_text( $raw_title, 150 );
 
-		// 5. Description formatting.
+		// 6. Description formatting.
 		$raw_desc = $product->get_short_description();
 		if ( empty( $raw_desc ) ) {
 			$raw_desc = $product->get_description();
@@ -109,7 +131,7 @@ class Feed_Item {
 		}
 		$description = self::clean_text( $raw_desc, 5000 );
 
-		// 6. Link & UTMs.
+		// 7. Link & UTMs.
 		$raw_link = $is_variation ? $product->get_permalink() : $product->get_permalink();
 		if ( empty( $raw_link ) && $is_variation ) {
 			$raw_link = $parent->get_permalink();
@@ -132,16 +154,15 @@ class Feed_Item {
 			}
 		}
 
-		// 7. Prices & Currency (TTC-compliant, dynamic sales fallback & schedule dates).
+		// 8. Prices & Currency (TTC-compliant, dynamic sales fallback & schedule dates).
 		$prices                    = self::get_prices( $product, $parent );
 		$formatted_price           = $prices['formatted_regular_price'];
 		$formatted_sale_price      = $prices['formatted_sale_price'];
 		$sale_price_effective_date = $prices['sale_price_effective_date'];
 
-		// 8. Brand determination.
+		// 9. Brand determination.
 		$brand = '';
-		$target_product_for_brand = $is_variation ? $parent : $product;
-		
+
 		if ( ! empty( $options['brand_attribute'] ) ) {
 			$brand = $target_product_for_brand->get_attribute( $options['brand_attribute'] );
 		}
@@ -163,22 +184,22 @@ class Feed_Item {
 		}
 		$brand = self::clean_text( $brand, 100 );
 
-		// 9. Product Type (hierarchical category breadcrumbs).
+		// 10. Product Type (hierarchical category breadcrumbs).
 		$target_for_cats = $is_variation ? $parent : $product;
 		$product_type    = self::get_category_breadcrumb( $target_for_cats->get_id() );
 
-		// 10. Additional images (gallery up to 5).
-		$gallery_ids = $target_product_for_brand->get_gallery_image_ids();
+		// 11. Additional images (gallery up to 5).
 		$additional_images = array();
-		if ( is_array( $gallery_ids ) ) {
+		if ( ! empty( $gallery_ids ) ) {
 			$count = 0;
 			foreach ( $gallery_ids as $gal_id ) {
+				$gal_id = (int) $gal_id;
 				if ( $gal_id === $image_id ) {
 					continue;
 				}
 				$gal_url = wp_get_attachment_image_url( $gal_id, 'full' );
 				if ( $gal_url ) {
-					$additional_images[] = self::format_image_url( $gal_url, $options );
+					$additional_images[] = self::format_image_url( $gal_url, $options, $gal_id );
 					$count++;
 					if ( $count >= 5 ) {
 						break;
@@ -187,7 +208,7 @@ class Feed_Item {
 			}
 		}
 
-		// 11. Build XML Item string.
+		// 12. Build XML Item string.
 		$xml  = "\t\t<item>\n";
 		$xml .= "\t\t\t<g:id>" . self::escape_xml( $id ) . "</g:id>\n";
 		$xml .= "\t\t\t<g:title><![CDATA[" . self::sanitize_cdata( $title ) . "]]></g:title>\n";
@@ -230,7 +251,6 @@ class Feed_Item {
 		}
 
 		// Internal labels for Meta Commerce Manager Product Sets segmentation.
-		$internal_labels = self::get_internal_labels( $product, $parent, $options );
 		if ( ! empty( $internal_labels ) && is_array( $internal_labels ) ) {
 			foreach ( $internal_labels as $label ) {
 				$xml .= "\t\t\t<g:internal_label><![CDATA[" . self::sanitize_cdata( $label ) . "]]></g:internal_label>\n";
@@ -2403,18 +2423,37 @@ class Feed_Item {
 
 	/**
 	 * Format and optionally offload an image URL to a CDN (e.g. ImageKit.io or Custom Pull CDN).
-	 * Supports auto-squaring 1:1 padding, JPEG normalization, and cache busting.
+	 * Supports auto-squaring 1:1 padding, JPEG normalization, RFC-3986 path encoding, and cache busting.
 	 *
 	 * @param string $image_url Raw image URL from WordPress.
 	 * @param array  $options   Plugin settings.
+	 * @param int    $image_id  Optional attachment ID for automatic per-image cache busting.
 	 * @return string Formatted/CDN-offloaded image URL.
 	 */
-	public static function format_image_url( $image_url, $options = array() ) {
+	public static function format_image_url( $image_url, $options = array(), $image_id = 0 ) {
 		if ( empty( $image_url ) ) {
 			return '';
 		}
 
 		$image_url = set_url_scheme( $image_url, 'https' );
+
+		// 0. RFC-3986 encode path segments (fix spaces, accents & special chars that break Meta crawler).
+		$parsed = wp_parse_url( $image_url );
+		if ( ! empty( $parsed['host'] ) && ! empty( $parsed['path'] ) ) {
+			$scheme   = ! empty( $parsed['scheme'] ) ? $parsed['scheme'] : 'https';
+			$port     = ! empty( $parsed['port'] ) ? ':' . $parsed['port'] : '';
+			$segments = explode( '/', $parsed['path'] );
+			$encoded  = array_map(
+				function( $seg ) {
+					return '' === $seg ? '' : rawurlencode( rawurldecode( $seg ) );
+				},
+				$segments
+			);
+			$image_url = $scheme . '://' . $parsed['host'] . $port . implode( '/', $encoded );
+			if ( ! empty( $parsed['query'] ) ) {
+				$image_url .= '?' . $parsed['query'];
+			}
+		}
 
 		// 1. Check if CDN Offloading is enabled.
 		$is_cdn_enabled = ! empty( $options['enable_image_cdn'] ) && ! empty( $options['image_cdn_endpoint'] );
@@ -2456,7 +2495,15 @@ class Feed_Item {
 			}
 		}
 
-		// 2. Cache busting version parameter (?v=...).
+		// 2. Automatic per-image cache busting (?ver=<mtime>) so edited/replaced images get a new URL for Meta.
+		if ( ! empty( $options['image_auto_cache_bust'] ) && $image_id > 0 && class_exists( '\SOYOO\MetaCatalog\Feed_Image_Risk' ) ) {
+			$mtime = Feed_Image_Risk::get_attachment_version_token( (int) $image_id );
+			if ( $mtime > 0 ) {
+				$image_url = add_query_arg( 'ver', $image_id . '_' . $mtime, $image_url );
+			}
+		}
+
+		// 3. Global cache busting version parameter (?v=...).
 		if ( ! empty( $options['image_version'] ) ) {
 			$image_url = add_query_arg( 'v', rawurlencode( (string) $options['image_version'] ), $image_url );
 		}

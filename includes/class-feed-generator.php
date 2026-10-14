@@ -224,14 +224,19 @@ class Feed_Generator {
 		$chunks     = array_chunk( $product_ids, $batch_size );
 
 		$job_state = array(
-			'run_id'         => $run_id,
-			'total_products' => count( $product_ids ),
-			'chunks'         => $chunks,
-			'total_chunks'   => count( $chunks ),
-			'current_step'   => 0,
-			'items_written'  => 0,
-			'start_time'     => microtime( true ),
-			'manual'         => $manual,
+			'run_id'                  => $run_id,
+			'total_products'          => count( $product_ids ),
+			'chunks'                  => $chunks,
+			'total_chunks'            => count( $chunks ),
+			'current_step'            => 0,
+			'items_written'           => 0,
+			'start_time'              => microtime( true ),
+			'manual'                  => $manual,
+			'strategic_items_checked' => 0,
+			'image_risks'             => array(),
+			'image_risks_total'       => 0,
+			'auto_healed_count'       => 0,
+			'labels_stripped_count'   => 0,
 		);
 
 		update_option( self::JOB_STATE_OPTION, $job_state, false );
@@ -345,6 +350,10 @@ class Feed_Generator {
 		$items_written  = 0;
 		$loop_counter   = 0;
 
+		if ( class_exists( '\SOYOO\MetaCatalog\Feed_Image_Risk' ) ) {
+			Feed_Image_Risk::reset_runtime_buffer();
+		}
+
 		foreach ( $product_ids as $pid ) {
 			$loop_counter++;
 			try {
@@ -433,6 +442,10 @@ class Feed_Generator {
 		}
 
 		fclose( $handle );
+
+		if ( class_exists( '\SOYOO\MetaCatalog\Feed_Image_Risk' ) ) {
+			Feed_Image_Risk::merge_chunk_buffer_into_job_state( $job_state );
+		}
 
 		Feed_Item::reset_sales_cache();
 
@@ -551,20 +564,29 @@ class Feed_Generator {
 		$file_size  = filesize( $final_file );
 		$total_item = (int) $job_state['items_written'];
 
+		// Finalize Strategic Image Risk Audit & Daily Email Alert.
+		$options     = get_option( 'woo_meta_catalog_settings', array() );
+		$risk_report = array();
+		if ( class_exists( '\SOYOO\MetaCatalog\Feed_Image_Risk' ) ) {
+			$risk_report = Feed_Image_Risk::finalize_report_and_maybe_alert( $job_state, $options );
+		}
+
 		$feed_status = array(
-			'success'        => true,
-			'status'         => 'completed',
-			'run_id'         => $run_id,
-			'progress'       => 100,
-			'last_generated' => current_time( 'timestamp' ),
-			'duration'       => $duration,
-			'total_items'    => $total_item,
-			'file_size'      => $file_size,
-			'file_size_human'=> size_format( $file_size, 2 ),
-			'file_path'      => $final_file,
-			'file_url'       => self::get_feed_file_url(),
-			'canonical_url'  => Feed_Server::get_public_url(),
-			'message'        => sprintf(
+			'success'               => true,
+			'status'                => 'completed',
+			'run_id'                => $run_id,
+			'progress'              => 100,
+			'last_generated'        => current_time( 'timestamp' ),
+			'duration'              => $duration,
+			'total_items'           => $total_item,
+			'file_size'             => $file_size,
+			'file_size_human'       => size_format( $file_size, 2 ),
+			'file_path'             => $final_file,
+			'file_url'              => self::get_feed_file_url(),
+			'canonical_url'         => Feed_Server::get_public_url(),
+			'image_risk_count'      => (int) ( $risk_report['total_at_risk'] ?? 0 ),
+			'image_risk_email_sent' => ! empty( $risk_report['email_sent'] ),
+			'message'               => sprintf(
 				__( 'Feed successfully generated with %1$d items in %2$s seconds (%3$s).', 'woo-meta-catalog' ),
 				$total_item,
 				$duration,

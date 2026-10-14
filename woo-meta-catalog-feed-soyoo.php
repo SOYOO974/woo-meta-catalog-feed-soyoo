@@ -3,7 +3,7 @@
  * Plugin Name:       Woo Meta Catalog Feed Soyoo
  * Plugin URI:        https://github.com/SOYOO974/woo-meta-catalog-feed-soyoo/
  * Description:       Générateur de flux catalogue XML haute performance, ultra-léger et autonome pour Meta Ads (Commerce Manager, Advantage+ Catalog Ads, retargeting DPA) et Google Shopping.
- * Version:           1.10.0
+ * Version:           1.11.0
  * Requires at least: 6.0
  * Requires PHP:      7.4
  * Author:            SOYOO
@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin constants.
-define( 'WOO_META_CATALOG_FEED_VERSION', '1.10.0' );
+define( 'WOO_META_CATALOG_FEED_VERSION', '1.11.0' );
 define( 'WOO_META_CATALOG_FEED_FILE', __FILE__ );
 define( 'WOO_META_CATALOG_FEED_DIR', plugin_dir_path( __FILE__ ) );
 define( 'WOO_META_CATALOG_FEED_URL', plugin_dir_url( __FILE__ ) );
@@ -77,6 +77,7 @@ function woo_meta_catalog_feed_activate() {
 		'exclude_out_of_stock'                 => 0,
 		'exclude_no_image'                     => 1,
 		'image_version'                        => '',
+		'image_auto_cache_bust'                => 1,
 		'enable_image_cdn'                     => 0,
 		'image_cdn_provider'                   => 'imagekit',
 		'image_cdn_endpoint'                   => '',
@@ -127,6 +128,11 @@ function woo_meta_catalog_feed_activate() {
 		'label_trending_cat_fallback_excluded' => array(),
 		'label_trending_min_price'             => 8.0,
 		'label_trending_min_stock'             => 2,
+		'enable_image_risk_alert'              => 1,
+		'image_risk_alert_email'               => get_option( 'admin_email' ),
+		'image_risk_auto_fallback_gallery'     => 1,
+		'image_risk_protect_sets'              => 0,
+		'image_risk_flag_webp'                 => 0,
 	);
 
 	$existing = get_option( 'woo_meta_catalog_settings', array() );
@@ -181,6 +187,7 @@ function woo_meta_catalog_feed_init() {
 
 	// Load classes.
 	require_once WOO_META_CATALOG_FEED_DIR . 'includes/class-feed-logger.php';
+	require_once WOO_META_CATALOG_FEED_DIR . 'includes/class-feed-image-risk.php';
 	require_once WOO_META_CATALOG_FEED_DIR . 'includes/class-feed-diagnostic.php';
 	require_once WOO_META_CATALOG_FEED_DIR . 'includes/class-feed-item.php';
 	require_once WOO_META_CATALOG_FEED_DIR . 'includes/class-feed-generator.php';

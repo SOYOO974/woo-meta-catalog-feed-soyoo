@@ -332,6 +332,43 @@ class Feed_Diagnostic {
 			'notes'   => $trending_notes,
 		);
 
+		// 10. Strategic Product Sets Image Risk Audit (Meta >= 500x500 px, < 8 MB, JPEG/PNG).
+		$risk_alert_on = ! isset( $options['enable_image_risk_alert'] ) || ! empty( $options['enable_image_risk_alert'] );
+		$risk_report   = class_exists( '\SOYOO\MetaCatalog\Feed_Image_Risk' ) ? get_option( Feed_Image_Risk::REPORT_OPTION, array() ) : array();
+		$last_email    = class_exists( '\SOYOO\MetaCatalog\Feed_Image_Risk' ) ? get_option( Feed_Image_Risk::LAST_EMAIL_OPTION, array() ) : array();
+		$risk_count    = isset( $risk_report['total_at_risk'] ) ? (int) $risk_report['total_at_risk'] : 0;
+		$risk_checked  = isset( $risk_report['strategic_items_checked'] ) ? (int) $risk_report['strategic_items_checked'] : 0;
+		$risk_healed   = isset( $risk_report['auto_healed_count'] ) ? (int) $risk_report['auto_healed_count'] : 0;
+		$risk_status   = 'info';
+		$risk_notes    = array();
+
+		if ( ! empty( $risk_report ) ) {
+			if ( $risk_count > 0 ) {
+				$risk_status  = 'warning';
+				$risk_notes[] = sprintf(
+					__( '%1$d produit(s) stratégique(s) présentent une image non conforme aux règles Meta (dimensions < 500×500 px, fichier manquant ou > 8 Mo), dont %2$d auto-sauvé(s) via galerie.', 'woo-meta-catalog' ),
+					$risk_count,
+					$risk_healed
+				);
+			} else {
+				$risk_status = 'ok';
+			}
+		}
+
+		$results['checks']['image_risk_audit'] = array(
+			'title'   => __( 'Audit Images Ensembles Meta (≥ 500×500 px)', 'woo-meta-catalog' ),
+			'status'  => $risk_status,
+			'badge'   => ! empty( $risk_report ) ? ( 0 === $risk_count ? __( '100% Conforme', 'woo-meta-catalog' ) : sprintf( __( '%d à risque', 'woo-meta-catalog' ), $risk_count ) ) : __( 'En attente', 'woo-meta-catalog' ),
+			'details' => array(
+				__( 'Alerte quotidienne active', 'woo-meta-catalog' )  => $risk_alert_on ? __( 'Oui (Max 1 e-mail / 24h)', 'woo-meta-catalog' ) : __( 'Désactivée', 'woo-meta-catalog' ),
+				__( 'Articles étiquetés audités', 'woo-meta-catalog' ) => ! empty( $risk_report ) ? (string) $risk_checked : '-',
+				__( 'Produits à risque détectés', 'woo-meta-catalog' ) => ! empty( $risk_report ) ? (string) $risk_count : '-',
+				__( 'Sauvés via Galerie produit', 'woo-meta-catalog' ) => ! empty( $risk_report ) ? (string) $risk_healed : '-',
+				__( 'Dernier e-mail d\'alerte', 'woo-meta-catalog' )   => ! empty( $last_email['date'] ) ? $last_email['date'] : __( 'Aucun', 'woo-meta-catalog' ),
+			),
+			'notes'   => $risk_notes,
+		);
+
 		// Calculate global summary counters.
 		foreach ( $results['checks'] as $c ) {
 			if ( 'ok' === $c['status'] ) {

@@ -209,6 +209,10 @@
 									$('#status-date-val').text('À l\'instant');
 									$('.woo-meta-empty-feed-notice').slideUp(300);
 
+									if (d.image_risk_html && $('#woo-meta-image-risk-preview-box').length) {
+										$('#woo-meta-image-risk-preview-box').replaceWith(d.image_risk_html);
+									}
+
 									setTimeout(function() {
 										$('#generation-progress-wrap').fadeOut(500);
 									}, 4000);
@@ -600,6 +604,89 @@
 					$btn.removeClass('loading').prop('disabled', false);
 					$text.text(originalText);
 					alert('Erreur serveur lors du recalcul des tendances : ' + (error || status || 'Serveur indisponible'));
+				}
+			});
+		});
+
+		// 11. Strategic Image Risk Scan & Manual Email Dispatch
+		$(document).on('click', '#btn-scan-image-risks', function(e) {
+			e.preventDefault();
+			var $btn = $(this);
+			if ($btn.hasClass('loading')) {
+				return;
+			}
+
+			var $text = $btn.find('.btn-text');
+			var originalText = $text.text();
+
+			$btn.addClass('loading').prop('disabled', true);
+			$text.text('Analyse en cours...');
+
+			$.ajax({
+				url: wooMetaCatalogVars.ajaxUrl,
+				type: 'POST',
+				dataType: 'json',
+				data: {
+					action: 'woo_meta_catalog_scan_image_risks',
+					security: wooMetaCatalogVars.nonce
+				},
+				success: function(response) {
+					$btn.removeClass('loading').prop('disabled', false);
+					$text.text(originalText);
+
+					if (response.success && response.data && response.data.html) {
+						$('#woo-meta-image-risk-preview-box').replaceWith(response.data.html);
+					} else {
+						var msg = (response.data && response.data.message) ? response.data.message : 'Erreur lors de l\'analyse des images.';
+						alert(msg);
+					}
+				},
+				error: function(xhr, status, error) {
+					$btn.removeClass('loading').prop('disabled', false);
+					$text.text(originalText);
+					alert('Erreur serveur lors de l\'analyse des images : ' + (error || status || 'Serveur indisponible'));
+				}
+			});
+		});
+
+		$(document).on('click', '#btn-send-risk-email', function(e) {
+			e.preventDefault();
+			var $btn = $(this);
+			if ($btn.hasClass('loading')) {
+				return;
+			}
+
+			var emailVal = ($('#image_risk_alert_email').val() || '').trim();
+			var $text = $btn.find('.btn-text');
+			var originalText = $text.text();
+
+			$btn.addClass('loading').prop('disabled', true);
+			$text.text('Envoi en cours...');
+
+			$.ajax({
+				url: wooMetaCatalogVars.ajaxUrl,
+				type: 'POST',
+				dataType: 'json',
+				data: {
+					action: 'woo_meta_catalog_send_risk_email',
+					security: wooMetaCatalogVars.nonce,
+					email: emailVal
+				},
+				success: function(response) {
+					$btn.removeClass('loading').prop('disabled', false);
+					$text.text(originalText);
+
+					if (response.success && response.data && response.data.message) {
+						alert(response.data.message);
+					} else {
+						var msg = (response.data && response.data.message) ? response.data.message : 'Erreur lors de l\'envoi de l\'e-mail.';
+						alert(msg);
+					}
+				},
+				error: function(xhr, status, error) {
+					$btn.removeClass('loading').prop('disabled', false);
+					$text.text(originalText);
+					alert('Erreur serveur lors de l\'envoi de l\'e-mail : ' + (error || status || 'Serveur indisponible'));
 				}
 			});
 		});
