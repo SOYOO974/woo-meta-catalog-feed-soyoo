@@ -47,24 +47,24 @@ class Feed_CLI {
 		if ( $sync ) {
 			\WP_CLI::log( 'Starting synchronous XML feed generation...' );
 			$generator = Feed_Generator::instance();
-			$res       = $generator->start_generation( true );
+			$init      = $generator->init_generation( true );
 
-			if ( empty( $res['success'] ) ) {
-				\WP_CLI::error( $res['message'] ?? 'Failed to start generation.' );
+			if ( empty( $init['success'] ) ) {
+				\WP_CLI::error( $init['message'] ?? 'Failed to start generation.' );
 				return;
 			}
 
-			// Process remaining chunks directly.
-			$state = get_option( Feed_Generator::JOB_STATE_OPTION, array() );
-			if ( ! empty( $state['chunks'] ) ) {
-				$progress = \WP_CLI\Utils\make_progress_bar( 'Processing product batches', count( $state['chunks'] ) );
-				foreach ( array_keys( $state['chunks'] ) as $step ) {
-					$generator->process_chunk( $state['run_id'], $step );
+			$total_chunks = max( 1, (int) ( $init['total_chunks'] ?? 1 ) );
+			$progress     = \WP_CLI\Utils\make_progress_bar( 'Processing product batches', $total_chunks );
+
+			$generator->process_all_synchronously(
+				$init['run_id'],
+				function() use ( $progress ) {
 					$progress->tick();
 				}
-				$progress->finish();
-				$generator->finalize_feed( $state['run_id'] );
-			}
+			);
+
+			$progress->finish();
 
 			$status = get_option( Feed_Generator::FEED_STATUS_OPTION, array() );
 			\WP_CLI::success( sprintf( 'Feed generated successfully with %d items in %s s (%s)!', $status['total_items'] ?? 0, $status['duration'] ?? 0, $status['file_size_human'] ?? '0 KB' ) );

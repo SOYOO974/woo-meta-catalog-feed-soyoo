@@ -305,9 +305,10 @@ class Feed_Generator {
 	 *
 	 * @param string $run_id Run ID.
 	 * @param int    $step   Chunk index.
+	 * @param bool   $sync   True when running synchronously (CLI --sync or daily cron loop) to prevent enqueueing duplicate async actions.
 	 * @return array
 	 */
-	public function process_chunk( $run_id, $step ) {
+	public function process_chunk( $run_id, $step, $sync = false ) {
 		$job_state = get_option( self::JOB_STATE_OPTION, array() );
 
 		// Validation check.
@@ -477,8 +478,8 @@ class Feed_Generator {
 		);
 		update_option( self::FEED_STATUS_OPTION, $feed_status, false );
 
-		// Determine next action for background non-AJAX execution.
-		if ( ! wp_doing_ajax() ) {
+		// Determine next action for background non-AJAX and non-synchronous execution.
+		if ( ! wp_doing_ajax() && ! $sync ) {
 			if ( $next_step < $total_chunks ) {
 				if ( function_exists( 'as_enqueue_async_action' ) ) {
 					as_enqueue_async_action(
@@ -571,6 +572,9 @@ class Feed_Generator {
 			$risk_report = Feed_Image_Risk::finalize_report_and_maybe_alert( $job_state, $options );
 		}
 
+		$file_url      = self::get_feed_file_url();
+		$canonical_url = Feed_Server::get_public_url();
+
 		$feed_status = array(
 			'success'               => true,
 			'status'                => 'completed',
@@ -582,8 +586,8 @@ class Feed_Generator {
 			'file_size'             => $file_size,
 			'file_size_human'       => size_format( $file_size, 2 ),
 			'file_path'             => $final_file,
-			'file_url'              => self::get_feed_file_url(),
-			'canonical_url'         => Feed_Server::get_public_url(),
+			'file_url'              => $file_url,
+			'canonical_url'         => $canonical_url,
 			'image_risk_count'      => (int) ( $risk_report['total_at_risk'] ?? 0 ),
 			'image_risk_email_sent' => ! empty( $risk_report['email_sent'] ),
 			'message'               => sprintf(
@@ -599,6 +603,21 @@ class Feed_Generator {
 		// Clean state & lock.
 		delete_transient( self::LOCK_TRANSIENT );
 		delete_option( self::JOB_STATE_OPTION );
+
+		// Explicitly purge direct static XML URL and canonical rewrite URL on Rocket.net / Cloudflare Enterprise & WP Rocket.
+		$urls_to_purge = array_values( array_unique( array_filter( array( $file_url, $canonical_url ) ) ) );
+		if ( ! empty( $urls_to_purge ) ) {
+			if ( class_exists( '\CDN_Clear_Cache_Api' ) && method_exists( '\CDN_Clear_Cache_Api', 'cache_api_call' ) ) {
+				try {
+					\CDN_Clear_Cache_Api::cache_api_call( $urls_to_purge, 'purge' );
+				} catch ( \Throwable $e ) {
+					// Ignore CDN purge exceptions to avoid breaking feed completion.
+				}
+			}
+			if ( function_exists( 'rocket_clean_files' ) ) {
+				rocket_clean_files( $urls_to_purge );
+			}
+		}
 
 		// Trigger hook for external caches (WP Agent Bridge, Cloudflare, etc.).
 		do_action( 'woo_meta_catalog_feed_generated', $final_file, $total_item, $duration );
@@ -653,6 +672,10 @@ class Feed_Generator {
 	public static function reset_lock() {
 		delete_transient( self::LOCK_TRANSIENT );
 		delete_option( self::JOB_STATE_OPTION );
+		if ( function_exists( 'as_unschedule_all_actions' ) ) {
+			as_unschedule_all_actions( self::CHUNK_HOOK );
+			as_unschedule_all_actions( self::FINALIZE_HOOK );
+		}
 		$status = get_option( self::FEED_STATUS_OPTION, array() );
 		if ( isset( $status['status'] ) && 'running' === $status['status'] ) {
 			$status['status']  = 'failed';
@@ -664,10 +687,11 @@ class Feed_Generator {
 	/**
 	 * Synchronous fallback if Action Scheduler is unavailable or for CLI / daily cron execution.
 	 *
-	 * @param string $run_id Run ID.
+	 * @param string        $run_id            Run ID.
+	 * @param callable|null $on_chunk_complete Optional callback invoked after each chunk (`function( int $step )`).
 	 * @return array|false
 	 */
-	public function process_all_synchronously( $run_id ) {
+	public function process_all_synchronously( $run_id, $on_chunk_complete = null ) {
 		$job_state = get_option( self::JOB_STATE_OPTION, array() );
 		if ( empty( $job_state['chunks'] ) ) {
 			return false;
@@ -678,7 +702,10 @@ class Feed_Generator {
 		}
 
 		foreach ( array_keys( $job_state['chunks'] ) as $step ) {
-			$this->process_chunk( $run_id, $step );
+			$this->process_chunk( $run_id, $step, true );
+			if ( is_callable( $on_chunk_complete ) ) {
+				call_user_func( $on_chunk_complete, $step );
+			}
 		}
 
 		return $this->finalize_feed( $run_id );
